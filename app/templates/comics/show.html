@@ -9,7 +9,7 @@
         <div class="card">
             {% if comic.cover_image %}
             <img src="{{ url_for('comics.uploaded_file', filename=comic.cover_image) }}" 
-                 class="card-img-top" alt="{{ comic.title }}" style="max-height: 500px; object-fit: cover;">
+                 class="card-img-top" alt="{{ comic.title }}" style="max-height: 500px; object-fit: contain;">
             {% else %}
             <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 
                  style="height: 500px;">
