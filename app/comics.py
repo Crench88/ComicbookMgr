@@ -24,7 +24,16 @@ def save_cover_image(file):
         
         # Save original file
         filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        
+        # Ensure upload directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        try:
+            file.save(filepath)
+            print(f"File saved successfully: {filepath}")
+        except Exception as e:
+            print(f"Error saving file: {e}")
+            return None
         
         # Create thumbnail
         try:
@@ -33,6 +42,7 @@ def save_cover_image(file):
                 thumb_filename = f"thumb_{filename}"
                 thumb_filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], thumb_filename)
                 img.save(thumb_filepath)
+                print(f"Thumbnail created: {thumb_filepath}")
         except Exception as e:
             print(f"Error creating thumbnail: {e}")
         
@@ -255,3 +265,9 @@ def wishlist():
     return render_template('comics/wishlist.html',
                          title='Wishlist',
                          comics=wishlist_comics)
+
+@comics_bp.route('/uploads/<filename>')
+def uploaded_file(filename):
+    """Serve uploaded cover images."""
+    from flask import send_from_directory
+    return send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)

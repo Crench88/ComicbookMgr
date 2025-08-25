@@ -26,7 +26,8 @@ def create_app(test_config=None):
     Returns:
         Flask app instance
     """
-    app = Flask(__name__, instance_relative_config=True)
+    app = Flask(__name__, instance_relative_config=True, 
+                template_folder='templates', static_folder='static')
     
     # Configuration
     if test_config is None:

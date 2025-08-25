@@ -152,7 +152,7 @@
                         {% if comic and comic.cover_image %}
                         <div class="mt-2">
                             <small class="text-muted">Current cover image:</small>
-                            <img src="{{ url_for('static', filename='uploads/' + comic.cover_image) }}" 
+                            <img src="{{ url_for('comics.uploaded_file', filename=comic.cover_image) }}" 
                                  alt="Current cover" class="img-thumbnail" style="max-height: 100px;">
                         </div>
                         {% endif %}
