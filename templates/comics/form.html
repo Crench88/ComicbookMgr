@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card shadow">
+            <div class="card-header">
+                <h3 class="card-title mb-0">
+                    <i class="bi bi-{{ 'plus-circle' if not comic else 'pencil' }}"></i> 
+                    {{ title }}
+                </h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" enctype="multipart/form-data">
+                    {{ form.hidden_tag() }}
+                    
+                    <div class="row">
+                        <!-- Title and Issue Number -->
+                        <div class="col-md-8">
+                            <div class="mb-3">
+                                {{ form.title.label(class="form-label") }}
+                                {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else "")) }}
+                                {% if form.title.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.title.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                {{ form.issue_number.label(class="form-label") }}
+                                {{ form.issue_number(class="form-control" + (" is-invalid" if form.issue_number.errors else "")) }}
+                                {% if form.issue_number.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.issue_number.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <!-- Publisher and Genre -->
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.publisher.label(class="form-label") }}
+                                {{ form.publisher(class="form-control" + (" is-invalid" if form.publisher.errors else "")) }}
+                                {% if form.publisher.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.publisher.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.genre.label(class="form-label") }}
+                                {{ form.genre(class="form-control" + (" is-invalid" if form.genre.errors else "")) }}
+                                {% if form.genre.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.genre.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Characters -->
+                    <div class="mb-3">
+                        {{ form.characters.label(class="form-label") }}
+                        {{ form.characters(class="form-control" + (" is-invalid" if form.characters.errors else ""), rows=3, placeholder="Enter characters separated by commas (e.g., Spider-Man, Mary Jane, Green Goblin)") }}
+                        {% if form.characters.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.characters.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">Separate multiple characters with commas</div>
+                    </div>
+                    
+                    <div class="row">
+                        <!-- Release Date and Condition -->
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.release_date.label(class="form-label") }}
+                                {{ form.release_date(class="form-control" + (" is-invalid" if form.release_date.errors else ""), type="date") }}
+                                {% if form.release_date.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.release_date.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.condition.label(class="form-label") }}
+                                {{ form.condition(class="form-select" + (" is-invalid" if form.condition.errors else "")) }}
+                                {% if form.condition.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.condition.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Estimated Value -->
+                    <div class="mb-3">
+                        {{ form.estimated_value.label(class="form-label") }}
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            {{ form.estimated_value(class="form-control" + (" is-invalid" if form.estimated_value.errors else ""), type="number", step="0.01", min="0") }}
+                            {% if form.estimated_value.errors %}
+                                <div class="invalid-feedback">
+                                    {% for error in form.estimated_value.errors %}
+                                        {{ error }}
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Cover Image -->
+                    <div class="mb-3">
+                        {{ form.cover_image.label(class="form-label") }}
+                        {{ form.cover_image(class="form-control" + (" is-invalid" if form.cover_image.errors else "")) }}
+                        {% if form.cover_image.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.cover_image.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">Upload a cover image (JPG, PNG, GIF - max 16MB)</div>
+                        
+                        {% if comic and comic.cover_image %}
+                        <div class="mt-2">
+                            <small class="text-muted">Current cover image:</small>
+                            <img src="{{ url_for('static', filename='uploads/' + comic.cover_image) }}" 
+                                 alt="Current cover" class="img-thumbnail" style="max-height: 100px;">
+                        </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Notes -->
+                    <div class="mb-3">
+                        {{ form.notes.label(class="form-label") }}
+                        {{ form.notes(class="form-control" + (" is-invalid" if form.notes.errors else ""), rows=4, placeholder="Add any additional notes about this comic...") }}
+                        {% if form.notes.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.notes.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Wishlist Checkbox -->
+                    <div class="mb-3">
+                        <div class="form-check">
+                            {{ form.is_wishlist(class="form-check-input") }}
+                            {{ form.is_wishlist.label(class="form-check-label") }}
+                        </div>
+                    </div>
+                    
+                    <!-- Submit Buttons -->
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('comics.index') }}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <div>
+                            {% if comic %}
+                            <a href="{{ url_for('comics.show', id=comic.id) }}" class="btn btn-outline-primary me-2">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                            {% endif %}
+                            {{ form.submit(class="btn btn-primary") }}
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

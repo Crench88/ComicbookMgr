@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block title %}My Comics{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="row mb-4">
+    <div class="col-md-8">
+        <h1 class="h2">My Comics</h1>
+        <p class="text-muted">Manage your comic book collection</p>
+    </div>
+    <div class="col-md-4 text-md-end">
+        <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Add Comic
+        </a>
+        <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success">
+            <i class="bi bi-download"></i> Export
+        </a>
+    </div>
+</div>
+
+<!-- Search and Filter Form -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('comics.index') }}" class="row g-3">
+            <div class="col-md-4">
+                <label for="search" class="form-label">Search</label>
+                <input type="text" class="form-control" id="search" name="search" 
+                       value="{{ search_query }}" placeholder="Search by title, character, or publisher...">
+            </div>
+            <div class="col-md-2">
+                <label for="publisher" class="form-label">Publisher</label>
+                <select class="form-select" id="publisher" name="publisher">
+                    <option value="">All Publishers</option>
+                    {% for publisher in publishers %}
+                    <option value="{{ publisher }}" {% if publisher == publisher_filter %}selected{% endif %}>
+                        {{ publisher }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="condition" class="form-label">Condition</label>
+                <select class="form-select" id="condition" name="condition">
+                    <option value="">All Conditions</option>
+                    <option value="Mint" {% if condition_filter == 'Mint' %}selected{% endif %}>Mint</option>
+                    <option value="Near Mint" {% if condition_filter == 'Near Mint' %}selected{% endif %}>Near Mint</option>
+                    <option value="Very Fine" {% if condition_filter == 'Very Fine' %}selected{% endif %}>Very Fine</option>
+                    <option value="Fine" {% if condition_filter == 'Fine' %}selected{% endif %}>Fine</option>
+                    <option value="Very Good" {% if condition_filter == 'Very Good' %}selected{% endif %}>Very Good</option>
+                    <option value="Good" {% if condition_filter == 'Good' %}selected{% endif %}>Good</option>
+                    <option value="Fair" {% if condition_filter == 'Fair' %}selected{% endif %}>Fair</option>
+                    <option value="Poor" {% if condition_filter == 'Poor' %}selected{% endif %}>Poor</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="genre" class="form-label">Genre</label>
+                <input type="text" class="form-control" id="genre" name="genre" 
+                       value="{{ genre_filter }}" placeholder="Genre...">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">&nbsp;</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="wishlist" name="wishlist" 
+                           value="1" {% if wishlist_only %}checked{% endif %}>
+                    <label class="form-check-label" for="wishlist">
+                        Wishlist Only
+                    </label>
+                </div>
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-search"></i> Search
+                </button>
+                <a href="{{ url_for('comics.index') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-clockwise"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Comics Grid -->
+{% if comics.items %}
+    <div class="row">
+        {% for comic in comics.items %}
+        <div class="col-md-6 col-lg-4 col-xl-3 mb-4">
+            <div class="card h-100 shadow-sm">
+                {% if comic.cover_image %}
+                <img src="{{ url_for('static', filename='uploads/' + comic.cover_image) }}" 
+                     class="card-img-top" alt="{{ comic.title }}" style="height: 300px; object-fit: cover;">
+                {% else %}
+                <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 
+                     style="height: 300px;">
+                    <i class="bi bi-image text-muted display-4"></i>
+                </div>
+                {% endif %}
+                
+                <div class="card-body">
+                    <h6 class="card-title">{{ comic.title }} #{{ comic.issue_number }}</h6>
+                    <p class="card-text text-muted">{{ comic.publisher }}</p>
+                    
+                    {% if comic.characters %}
+                    <p class="card-text">
+                        <small class="text-muted">
+                            <strong>Characters:</strong> {{ comic.characters[:50] }}{% if comic.characters|length > 50 %}...{% endif %}
+                        </small>
+                    </p>
+                    {% endif %}
+                    
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        {% if comic.condition %}
+                        <span class="badge bg-secondary">{{ comic.condition }}</span>
+                        {% endif %}
+                        {% if comic.estimated_value %}
+                        <span class="badge bg-success">{{ comic.get_formatted_value() }}</span>
+                        {% endif %}
+                    </div>
+                    
+                    {% if comic.is_wishlist %}
+                    <span class="badge bg-warning text-dark">Wishlist</span>
+                    {% endif %}
+                </div>
+                
+                <div class="card-footer bg-transparent">
+                    <div class="btn-group w-100" role="group">
+                        <a href="{{ url_for('comics.show', id=comic.id) }}" 
+                           class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                        <a href="{{ url_for('comics.edit', id=comic.id) }}" 
+                           class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-pencil"></i> Edit
+                        </a>
+                        <button type="button" class="btn btn-sm btn-outline-danger" 
+                                onclick="confirmDelete({{ comic.id }}, '{{ comic.title }}')">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Pagination -->
+    {% if comics.pages > 1 %}
+    <nav aria-label="Comics pagination">
+        <ul class="pagination justify-content-center">
+            {% if comics.has_prev %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('comics.index', page=comics.prev_num, search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=wishlist_only) }}">
+                    Previous
+                </a>
+            </li>
+            {% endif %}
+            
+            {% for page_num in comics.iter_pages() %}
+                {% if page_num %}
+                    {% if page_num != comics.page %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('comics.index', page=page_num, search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=wishlist_only) }}">
+                            {{ page_num }}
+                        </a>
+                    </li>
+                    {% else %}
+                    <li class="page-item active">
+                        <span class="page-link">{{ page_num }}</span>
+                    </li>
+                    {% endif %}
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">...</span>
+                </li>
+                {% endif %}
+            {% endfor %}
+            
+            {% if comics.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('comics.index', page=comics.next_num, search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=wishlist_only) }}">
+                    Next
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+    
+{% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-collection display-1 text-muted"></i>
+        <h3 class="mt-3">No comics found</h3>
+        <p class="text-muted">
+            {% if search_query or publisher_filter or condition_filter or genre_filter or wishlist_only %}
+                Try adjusting your search criteria or 
+                <a href="{{ url_for('comics.index') }}">clear all filters</a>.
+            {% else %}
+                You haven't added any comics to your collection yet.
+            {% endif %}
+        </p>
+        <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Add Your First Comic
+        </a>
+    </div>
+{% endif %}
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete "<span id="comicTitle"></span>"?</p>
+                <p class="text-danger">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function confirmDelete(comicId, comicTitle) {
+    document.getElementById('comicTitle').textContent = comicTitle;
+    document.getElementById('deleteForm').action = '/comics/' + comicId + '/delete';
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+</script>
+{% endblock %}

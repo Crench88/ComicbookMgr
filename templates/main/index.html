@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<div class="row align-items-center py-5">
+    <div class="col-lg-6">
+        <h1 class="display-4 fw-bold text-primary mb-4">
+            Manage Your Comic Book Collection
+        </h1>
+        <p class="lead mb-4">
+            Keep track of your comic books, track their value, and discover new additions to your collection. 
+            A comprehensive tool for comic book enthusiasts.
+        </p>
+        {% if not current_user.is_authenticated %}
+        <div class="d-grid gap-2 d-md-flex justify-content-md-start">
+            <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg px-4 me-md-2">
+                <i class="bi bi-person-plus"></i> Get Started
+            </a>
+            <a href="{{ url_for('auth.login') }}" class="btn btn-outline-primary btn-lg px-4">
+                <i class="bi bi-box-arrow-in-right"></i> Login
+            </a>
+        </div>
+        {% else %}
+        <div class="d-grid gap-2 d-md-flex justify-content-md-start">
+            <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary btn-lg px-4 me-md-2">
+                <i class="bi bi-speedometer2"></i> Go to Dashboard
+            </a>
+            <a href="{{ url_for('comics.new') }}" class="btn btn-outline-primary btn-lg px-4">
+                <i class="bi bi-plus-circle"></i> Add Comic
+            </a>
+        </div>
+        {% endif %}
+    </div>
+    <div class="col-lg-6">
+        <div class="text-center">
+            <i class="bi bi-collection display-1 text-primary"></i>
+        </div>
+    </div>
+</div>
+
+<!-- Features Section -->
+<div class="row py-5">
+    <div class="col-12">
+        <h2 class="text-center mb-5">Features</h2>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-search display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Search & Filter</h5>
+                <p class="card-text">
+                    Find comics quickly with advanced search and filtering options by title, 
+                    publisher, character, genre, and condition.
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-graph-up display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Track Value</h5>
+                <p class="card-text">
+                    Monitor your collection's estimated value and track individual comic values 
+                    over time with detailed condition assessments.
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-heart display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Wishlist</h5>
+                <p class="card-text">
+                    Keep track of comics you want to add to your collection with a dedicated 
+                    wishlist feature.
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-image display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Cover Images</h5>
+                <p class="card-text">
+                    Upload and store cover images for your comics to create a visual 
+                    catalog of your collection.
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-download display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Export Data</h5>
+                <p class="card-text">
+                    Export your collection data to CSV format for backup or analysis 
+                    purposes.
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-phone display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Mobile Friendly</h5>
+                <p class="card-text">
+                    Responsive design that works perfectly on desktop, tablet, and 
+                    mobile devices.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Call to Action -->
+{% if not current_user.is_authenticated %}
+<div class="row py-5 bg-light rounded">
+    <div class="col-12 text-center">
+        <h3>Ready to start managing your collection?</h3>
+        <p class="lead">Join thousands of comic book enthusiasts who trust our platform.</p>
+        <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg">
+            <i class="bi bi-person-plus"></i> Create Free Account
+        </a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

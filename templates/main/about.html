@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}About{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card shadow">
+            <div class="card-body p-5">
+                <h1 class="text-center mb-4">About Comic Book Collection Manager</h1>
+                
+                <p class="lead text-center mb-5">
+                    A comprehensive web application designed for comic book enthusiasts to manage their personal collections.
+                </p>
+                
+                <div class="row mb-5">
+                    <div class="col-md-6">
+                        <h3>Our Mission</h3>
+                        <p>
+                            We believe that every comic book collection tells a unique story. Our mission is to provide 
+                            comic book enthusiasts with a powerful, yet simple tool to organize, track, and celebrate 
+                            their collections.
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <h3>Why Choose Us?</h3>
+                        <ul>
+                            <li>Easy-to-use interface</li>
+                            <li>Comprehensive tracking features</li>
+                            <li>Mobile-responsive design</li>
+                            <li>Secure data storage</li>
+                            <li>Export capabilities</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="row mb-5">
+                    <div class="col-12">
+                        <h3>Features</h3>
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <div class="text-center">
+                                    <i class="bi bi-collection display-4 text-primary"></i>
+                                    <h5>Collection Management</h5>
+                                    <p>Add, edit, and organize your comics with detailed information.</p>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="text-center">
+                                    <i class="bi bi-search display-4 text-primary"></i>
+                                    <h5>Search & Filter</h5>
+                                    <p>Find comics quickly with advanced search and filtering options.</p>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="text-center">
+                                    <i class="bi bi-graph-up display-4 text-primary"></i>
+                                    <h5>Analytics</h5>
+                                    <p>Track your collection's value and statistics over time.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-12 text-center">
+                        <h3>Get Started Today</h3>
+                        <p class="mb-4">
+                            Join thousands of comic book collectors who trust our platform to manage their collections.
+                        </p>
+                        {% if not current_user.is_authenticated %}
+                        <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg me-3">
+                            <i class="bi bi-person-plus"></i> Create Account
+                        </a>
+                        <a href="{{ url_for('auth.login') }}" class="btn btn-outline-primary btn-lg">
+                            <i class="bi bi-box-arrow-in-right"></i> Login
+                        </a>
+                        {% else %}
+                        <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary btn-lg">
+                            <i class="bi bi-speedometer2"></i> Go to Dashboard
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
