@@ -35,13 +35,42 @@ def save_cover_image(file):
             print(f"Error saving file: {e}")
             return None
         
-        # Create thumbnail
+        # Create thumbnail without cropping
         try:
             with Image.open(filepath) as img:
-                img.thumbnail((300, 300))
+                # Convert to RGB if necessary (for PNG with transparency)
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    # Create a white background
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                    img = background
+                
+                # Calculate new size maintaining aspect ratio
+                width, height = img.size
+                max_size = (300, 300)
+                
+                # Calculate scaling factor
+                scale = min(max_size[0] / width, max_size[1] / height)
+                new_size = (int(width * scale), int(height * scale))
+                
+                # Resize image
+                img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
+                
+                # Create a white background of the target size
+                thumb = Image.new('RGB', max_size, (255, 255, 255))
+                
+                # Calculate position to center the image
+                x = (max_size[0] - new_size[0]) // 2
+                y = (max_size[1] - new_size[1]) // 2
+                
+                # Paste the resized image onto the background
+                thumb.paste(img_resized, (x, y))
+                
                 thumb_filename = f"thumb_{filename}"
                 thumb_filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], thumb_filename)
-                img.save(thumb_filepath)
+                thumb.save(thumb_filepath, 'JPEG', quality=85)
                 print(f"Thumbnail created: {thumb_filepath}")
         except Exception as e:
             print(f"Error creating thumbnail: {e}")
@@ -172,11 +201,15 @@ def edit(id):
         if form.cover_image.data:
             filename = save_cover_image(form.cover_image.data)
             if filename:
-                # Delete old image if exists
+                # Delete old image and thumbnail if exists
                 if comic.cover_image:
                     old_file = os.path.join(current_app.config['UPLOAD_FOLDER'], comic.cover_image)
                     if os.path.exists(old_file):
                         os.remove(old_file)
+                    
+                    old_thumb = os.path.join(current_app.config['UPLOAD_FOLDER'], f"thumb_{comic.cover_image}")
+                    if os.path.exists(old_thumb):
+                        os.remove(old_thumb)
                 comic.cover_image = filename
         
         try:
@@ -196,11 +229,17 @@ def delete(id):
     comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
     
     try:
-        # Delete cover image if exists
+        # Delete cover image and thumbnail if exists
         if comic.cover_image:
+            # Delete original image
             file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], comic.cover_image)
             if os.path.exists(file_path):
                 os.remove(file_path)
+            
+            # Delete thumbnail
+            thumb_path = os.path.join(current_app.config['UPLOAD_FOLDER'], f"thumb_{comic.cover_image}")
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
         
         db.session.delete(comic)
         db.session.commit()
