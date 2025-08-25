@@ -5,10 +5,10 @@ Handles user login, logout, and registration functionality.
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
-from werkzeug.urls import url_parse
-from app import db
-from models import User
-from forms import LoginForm, RegistrationForm
+from urllib.parse import urlparse
+from . import db
+from .models import User
+from .forms import LoginForm, RegistrationForm
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -24,7 +24,7 @@ def login():
         if user and user.check_password(form.password.data):
             login_user(user, remember=True)
             next_page = request.args.get('next')
-            if not next_page or url_parse(next_page).netloc != '':
+            if not next_page or urlparse(next_page).netloc != '':
                 next_page = url_for('dashboard.index')
             flash('Login successful!', 'success')
             return redirect(next_page)

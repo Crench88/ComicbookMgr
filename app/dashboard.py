@@ -6,8 +6,8 @@ Handles the main dashboard with statistics and overview.
 from flask import Blueprint, render_template
 from flask_login import login_required, current_user
 from sqlalchemy import func
-from app import db
-from models import Comic
+from . import db
+from .models import Comic
 
 dashboard_bp = Blueprint('dashboard', __name__)
 

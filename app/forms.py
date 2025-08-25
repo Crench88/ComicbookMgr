@@ -10,8 +10,8 @@ from wtforms.validators import DataRequired, Email, Length, EqualTo, ValidationE
 
 # Import db and User with error handling
 try:
-    from app import db
-    from models import User
+    from . import db
+    from .models import User
 except ImportError:
     # For testing purposes
     db = None

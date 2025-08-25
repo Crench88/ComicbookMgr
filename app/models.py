@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 # Import db from app module
 try:
-    from app import db
+    from . import db
 except ImportError:
     # For testing purposes, create a mock db
     db = SQLAlchemy()

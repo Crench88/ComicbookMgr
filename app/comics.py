@@ -9,9 +9,9 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request,
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from PIL import Image
-from app import db
-from models import Comic
-from forms import ComicForm, SearchForm
+from . import db
+from .models import Comic
+from .forms import ComicForm, SearchForm
 
 comics_bp = Blueprint('comics', __name__)
 
