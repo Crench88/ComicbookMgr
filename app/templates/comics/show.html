@@ -53,6 +53,12 @@
                             <dt class="col-sm-4">Genre:</dt>
                             <dd class="col-sm-8">{{ comic.genre or 'Not specified' }}</dd>
                             
+                            <dt class="col-sm-4">UPC Code:</dt>
+                            <dd class="col-sm-8">{{ comic.upc or 'Not specified' }}</dd>
+                            
+                            <dt class="col-sm-4">ISBN Code:</dt>
+                            <dd class="col-sm-8">{{ comic.isbn or 'Not specified' }}</dd>
+                            
                             <dt class="col-sm-4">Release Date:</dt>
                             <dd class="col-sm-8">{{ comic.get_formatted_release_date() }}</dd>
                             

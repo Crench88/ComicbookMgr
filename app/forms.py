@@ -53,6 +53,10 @@ class ComicForm(FlaskForm):
     characters = TextAreaField('Characters (comma-separated)', validators=[Optional(), Length(max=500)])
     genre = StringField('Genre', validators=[Optional(), Length(max=100)])
     release_date = DateField('Release Date', validators=[Optional()], format='%Y-%m-%d')
+    upc = StringField('UPC Code', validators=[Optional(), Length(max=20)], 
+                     description='12-digit Universal Product Code (e.g., 123456789012)')
+    isbn = StringField('ISBN Code', validators=[Optional(), Length(max=20)], 
+                      description='13-digit International Standard Book Number (e.g., 978-0-7475-3269-9)')
     condition = SelectField('Condition', choices=[
         ('', 'Select Condition'),
         ('Mint', 'Mint'),

@@ -13,6 +13,104 @@
                 </h3>
             </div>
             <div class="card-body">
+                <!-- Comic Search Section -->
+                <div class="card mb-4 border-primary">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">
+                            <i class="bi bi-search"></i> Search for Comic Information
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                                                         <label for="searchQuery" class="form-label">Search by Title or Barcode</label>
+                                     <input type="text" class="form-control" id="searchQuery" 
+                                            placeholder="Enter comic title (e.g., Amazing Spider-Man) or barcode number">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">&nbsp;</label>
+                                    <button type="button" class="btn btn-primary w-100" id="searchBtn">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- API Selection Checkboxes -->
+                        <div class="row">
+                            <div class="col-12">
+                                <div class="mb-3">
+                                    <label class="form-label">Search Sources:</label>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchComicVine" checked>
+                                        <label class="form-check-label" for="searchComicVine">
+                                            <i class="bi bi-globe"></i> ComicVine
+                                            <span class="badge bg-success ms-1" id="comicvineStatus">✓</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchMarvel">
+                                        <label class="form-check-label" for="searchMarvel">
+                                            <i class="bi bi-lightning"></i> Marvel
+                                            <span class="badge bg-warning ms-1" id="marvelStatus">⚠</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchGCD">
+                                        <label class="form-check-label" for="searchGCD">
+                                            <i class="bi bi-upc-scan"></i> Open Library (ISBN)
+                                            <span class="badge bg-info ms-1" id="gcdStatus">📊</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchUPCDatabase">
+                                        <label class="form-check-label" for="searchUPCDatabase">
+                                            <i class="bi bi-upc"></i> UPC Database
+                                            <span class="badge bg-primary ms-1" id="upcDatabaseStatus">🔍</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchBarcodeLookup">
+                                        <label class="form-check-label" for="searchBarcodeLookup">
+                                            <i class="bi bi-barcode"></i> Barcode Lookup
+                                            <span class="badge bg-secondary ms-1" id="barcodeLookupStatus">🔍</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchLocal" checked>
+                                        <label class="form-check-label" for="searchLocal">
+                                            <i class="bi bi-database"></i> Local Database
+                                            <span class="badge bg-success ms-1" id="localStatus">✓</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                                                                         <div class="small text-muted">
+                            <i class="bi bi-info-circle"></i> 
+                            <span id="statusInfo">ComicVine and Local Database are working. Marvel API may need domain whitelisting. Open Library provides ISBN codes. UPC Database and Barcode Lookup provide UPC code searches. Local Database can search by UPC and ISBN numbers.</span>
+                        </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Search Results -->
+                        <div id="searchResults" class="d-none">
+                            <h6>Search Results:</h6>
+                            <div id="resultsList" class="list-group mb-3"></div>
+                        </div>
+                        
+                        <div id="searchLoading" class="d-none text-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Searching for comics...</p>
+                        </div>
+                        
+                        <div id="searchError" class="d-none alert alert-danger"></div>
+                    </div>
+                </div>
+
                 <form method="POST" enctype="multipart/form-data">
                     {{ form.hidden_tag() }}
                     
@@ -21,7 +119,7 @@
                         <div class="col-md-8">
                             <div class="mb-3">
                                 {{ form.title.label(class="form-label") }}
-                                {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else "")) }}
+                                {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else ""), id="comicTitle") }}
                                 {% if form.title.errors %}
                                     <div class="invalid-feedback">
                                         {% for error in form.title.errors %}
@@ -34,7 +132,7 @@
                         <div class="col-md-4">
                             <div class="mb-3">
                                 {{ form.issue_number.label(class="form-label") }}
-                                {{ form.issue_number(class="form-control" + (" is-invalid" if form.issue_number.errors else "")) }}
+                                {{ form.issue_number(class="form-control" + (" is-invalid" if form.issue_number.errors else ""), id="comicIssueNumber") }}
                                 {% if form.issue_number.errors %}
                                     <div class="invalid-feedback">
                                         {% for error in form.issue_number.errors %}
@@ -51,7 +149,7 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 {{ form.publisher.label(class="form-label") }}
-                                {{ form.publisher(class="form-control" + (" is-invalid" if form.publisher.errors else "")) }}
+                                {{ form.publisher(class="form-control" + (" is-invalid" if form.publisher.errors else ""), id="comicPublisher") }}
                                 {% if form.publisher.errors %}
                                     <div class="invalid-feedback">
                                         {% for error in form.publisher.errors %}
@@ -64,7 +162,7 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 {{ form.genre.label(class="form-label") }}
-                                {{ form.genre(class="form-control" + (" is-invalid" if form.genre.errors else "")) }}
+                                {{ form.genre(class="form-control" + (" is-invalid" if form.genre.errors else ""), id="comicGenre") }}
                                 {% if form.genre.errors %}
                                     <div class="invalid-feedback">
                                         {% for error in form.genre.errors %}
@@ -79,7 +177,7 @@
                     <!-- Characters -->
                     <div class="mb-3">
                         {{ form.characters.label(class="form-label") }}
-                        {{ form.characters(class="form-control" + (" is-invalid" if form.characters.errors else ""), rows=3, placeholder="Enter characters separated by commas (e.g., Spider-Man, Mary Jane, Green Goblin)") }}
+                        {{ form.characters(class="form-control" + (" is-invalid" if form.characters.errors else ""), rows=3, placeholder="Enter characters separated by commas (e.g., Spider-Man, Mary Jane, Green Goblin)", id="comicCharacters") }}
                         {% if form.characters.errors %}
                             <div class="invalid-feedback">
                                 {% for error in form.characters.errors %}
@@ -90,12 +188,44 @@
                         <div class="form-text">Separate multiple characters with commas</div>
                     </div>
                     
+                    <!-- UPC and ISBN -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.upc.label(class="form-label") }}
+                                {{ form.upc(class="form-control" + (" is-invalid" if form.upc.errors else ""), placeholder="123456789012", id="comicUPC") }}
+                                {% if form.upc.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.upc.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text">12-digit Universal Product Code</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.isbn.label(class="form-label") }}
+                                {{ form.isbn(class="form-control" + (" is-invalid" if form.isbn.errors else ""), placeholder="978-0-7475-3269-9", id="comicISBN") }}
+                                {% if form.isbn.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.isbn.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text">13-digit International Standard Book Number</div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <div class="row">
                         <!-- Release Date and Condition -->
                         <div class="col-md-6">
                             <div class="mb-3">
                                 {{ form.release_date.label(class="form-label") }}
-                                {{ form.release_date(class="form-control" + (" is-invalid" if form.release_date.errors else ""), type="date") }}
+                                {{ form.release_date(class="form-control" + (" is-invalid" if form.release_date.errors else ""), type="date", id="comicReleaseDate") }}
                                 {% if form.release_date.errors %}
                                     <div class="invalid-feedback">
                                         {% for error in form.release_date.errors %}
@@ -198,4 +328,255 @@
         </div>
     </div>
 </div>
+
+<!-- Comic Search JavaScript -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchBtn = document.getElementById('searchBtn');
+    const searchQuery = document.getElementById('searchQuery');
+    const searchResults = document.getElementById('searchResults');
+    const resultsList = document.getElementById('resultsList');
+    const searchLoading = document.getElementById('searchLoading');
+    const searchError = document.getElementById('searchError');
+    
+    // Form fields
+    const titleField = document.getElementById('comicTitle');
+    const issueField = document.getElementById('comicIssueNumber');
+    const publisherField = document.getElementById('comicPublisher');
+    const genreField = document.getElementById('comicGenre');
+    const charactersField = document.getElementById('comicCharacters');
+    const upcField = document.getElementById('comicUPC');
+    const isbnField = document.getElementById('comicISBN');
+    const releaseDateField = document.getElementById('comicReleaseDate');
+    
+    searchBtn.addEventListener('click', function() {
+        const query = searchQuery.value.trim();
+        if (!query) {
+            showError('Please enter a search term');
+            return;
+        }
+        
+        // Get selected search sources
+        const searchComicVine = document.getElementById('searchComicVine').checked;
+        const searchMarvel = document.getElementById('searchMarvel').checked;
+        const searchGCD = document.getElementById('searchGCD').checked;
+        const searchUPCDatabase = document.getElementById('searchUPCDatabase').checked;
+        const searchBarcodeLookup = document.getElementById('searchBarcodeLookup').checked;
+        const searchLocal = document.getElementById('searchLocal').checked;
+        
+        // Check if at least one source is selected
+        if (!searchComicVine && !searchMarvel && !searchGCD && !searchUPCDatabase && !searchBarcodeLookup && !searchLocal) {
+            showError('Please select at least one search source');
+            return;
+        }
+        
+        // Show loading state with selected sources
+        searchLoading.classList.remove('d-none');
+        searchResults.classList.add('d-none');
+        searchError.classList.add('d-none');
+        
+        // Update loading message to show selected sources
+        const loadingText = searchLoading.querySelector('p');
+        const sources = [];
+        if (searchComicVine) sources.push('ComicVine');
+        if (searchMarvel) sources.push('Marvel');
+        if (searchGCD) sources.push('Open Library (ISBN)');
+        if (searchUPCDatabase) sources.push('UPC Database');
+        if (searchBarcodeLookup) sources.push('Barcode Lookup');
+        if (searchLocal) sources.push('Local Database');
+        loadingText.textContent = `Searching ${sources.join(', ')}...`;
+        
+        // Build search parameters
+        const params = new URLSearchParams({
+            q: query,
+            comicvine: searchComicVine ? '1' : '0',
+            marvel: searchMarvel ? '1' : '0',
+            gcd: searchGCD ? '1' : '0',
+            upc_database: searchUPCDatabase ? '1' : '0',
+            barcode_lookup: searchBarcodeLookup ? '1' : '0',
+            local: searchLocal ? '1' : '0'
+        });
+        
+        // Make API request
+        console.log('Searching for:', query);
+        console.log('Search sources:', { comicvine: searchComicVine, marvel: searchMarvel, gcd: searchGCD, upc_database: searchUPCDatabase, barcode_lookup: searchBarcodeLookup, local: searchLocal });
+        fetch(`/comics/search-api?${params.toString()}`)
+            .then(response => {
+                console.log('Response status:', response.status);
+                return response.json();
+            })
+            .then(data => {
+                console.log('Search results:', data);
+                console.log('Results array:', data.results);
+                console.log('Results length:', data.results ? data.results.length : 'undefined');
+                searchLoading.classList.add('d-none');
+                
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+                
+                if (data.results && data.results.length > 0) {
+                    console.log('Displaying results...');
+                    displayResults(data.results);
+                } else {
+                    console.log('No results found');
+                    showError('No comics found matching your search');
+                }
+            })
+            .catch(error => {
+                console.error('Search error:', error);
+                searchLoading.classList.add('d-none');
+                showError('Search failed: ' + error.message);
+            });
+    });
+    
+    function displayResults(results) {
+        console.log('displayResults called with:', results);
+        resultsList.innerHTML = '';
+        
+        results.forEach((comic, index) => {
+            console.log('Processing comic:', comic);
+            const resultItem = document.createElement('div');
+            resultItem.className = 'list-group-item list-group-item-action';
+            
+            const title = comic.title || 'Unknown Title';
+            const issue = comic.issue_number || 'Unknown Issue';
+            const publisher = comic.publisher || 'Unknown Publisher';
+            const volume = comic.volume || '';
+            
+            resultItem.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="d-flex flex-grow-1">
+                        ${comic.cover_image_url ? `
+                            <div class="me-3">
+                                <img src="${comic.cover_image_url}" alt="Cover" class="img-thumbnail" style="width: 60px; height: 80px; object-fit: cover;">
+                            </div>
+                        ` : ''}
+                        <div class="flex-grow-1">
+                            <h6 class="mb-1">${title} #${issue}</h6>
+                            <p class="mb-1 text-muted">${publisher}${volume ? ' - ' + volume : ''}</p>
+                            ${comic.release_date ? `<small class="text-success"><i class="bi bi-calendar"></i> Release: ${formatDate(comic.release_date)}</small><br>` : ''}
+                            ${comic.characters ? `<small class="text-muted">Characters: ${comic.characters}</small><br>` : ''}
+                            ${comic.upc ? `<small class="text-info"><i class="bi bi-upc-scan"></i> UPC: ${comic.upc}</small><br>` : ''}
+                            ${comic.isbn ? `<small class="text-info"><i class="bi bi-book"></i> ISBN: ${comic.isbn}</small><br>` : ''}
+                            ${comic.source ? `<small class="text-secondary">Source: ${comic.source}</small>` : ''}
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectComic(${index})">
+                        <i class="bi bi-check"></i> Select
+                    </button>
+                </div>
+            `;
+            
+            resultsList.appendChild(resultItem);
+        });
+        
+        // Store results for selection
+        window.searchResults = results;
+        searchResults.classList.remove('d-none');
+    }
+    
+    function showError(message) {
+        searchError.textContent = message;
+        searchError.classList.remove('d-none');
+    }
+    
+    // Helper function to format dates
+    function formatDate(dateString) {
+        if (!dateString) return '';
+        
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return dateString;
+            
+            // Format as MM/DD/YYYY or just YYYY if only year is available
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1;
+            const day = date.getDate();
+            
+            // If it's just a year (month/day are 1/1), show only year
+            if (month === 1 && day === 1) {
+                return year.toString();
+            }
+            
+            // Otherwise show full date
+            return `${month.toString().padStart(2, '0')}/${day.toString().padStart(2, '0')}/${year}`;
+        } catch (e) {
+            return dateString;
+        }
+    }
+    
+    // Global function to select a comic
+    window.selectComic = function(index) {
+        const comic = window.searchResults[index];
+        
+        // Fill form fields
+        titleField.value = comic.title || '';
+        issueField.value = comic.issue_number || '';
+        publisherField.value = comic.publisher || '';
+        genreField.value = comic.genre || '';
+        charactersField.value = comic.characters || '';
+        upcField.value = comic.upc || '';
+        isbnField.value = comic.isbn || '';
+        
+        // Format and set release date
+        if (comic.release_date) {
+            const date = new Date(comic.release_date);
+            if (!isNaN(date.getTime())) {
+                releaseDateField.value = date.toISOString().split('T')[0];
+            }
+        }
+        
+        // Fetch cover image if available
+        if (comic.cover_image_url) {
+            fetchCoverImage(comic.cover_image_url);
+        }
+        
+        // Hide search results
+        searchResults.classList.add('d-none');
+        
+        // Scroll to form
+        titleField.scrollIntoView({ behavior: 'smooth' });
+    };
+    
+    function fetchCoverImage(imageUrl) {
+        fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.filename) {
+                    // Create a hidden input to store the fetched image filename
+                    let hiddenInput = document.querySelector('input[name="fetched_cover"]');
+                    if (!hiddenInput) {
+                        hiddenInput = document.createElement('input');
+                        hiddenInput.type = 'hidden';
+                        hiddenInput.name = 'fetched_cover';
+                        document.querySelector('form').appendChild(hiddenInput);
+                    }
+                    hiddenInput.value = data.filename;
+                    
+                    // Show success message
+                    const successMsg = document.createElement('div');
+                    successMsg.className = 'alert alert-success mt-2';
+                    successMsg.innerHTML = '<i class="bi bi-check-circle"></i> Cover image fetched successfully!';
+                    titleField.parentNode.appendChild(successMsg);
+                    
+                    // Remove message after 3 seconds
+                    setTimeout(() => successMsg.remove(), 3000);
+                }
+            })
+            .catch(error => {
+                console.error('Failed to fetch cover image:', error);
+            });
+    }
+    
+    // Allow Enter key to trigger search
+    searchQuery.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            searchBtn.click();
+        }
+    });
+});
+</script>
 {% endblock %}

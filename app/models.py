@@ -53,6 +53,8 @@ class Comic(db.Model):
     characters = db.Column(db.Text)  # Comma-separated list of characters
     genre = db.Column(db.String(100))
     release_date = db.Column(db.Date)
+    upc = db.Column(db.String(20))  # Universal Product Code (12 digits)
+    isbn = db.Column(db.String(20))  # International Standard Book Number (13 digits)
     condition = db.Column(db.String(50))  # Mint, Near Mint, Very Fine, Fine, Good, etc.
     estimated_value = db.Column(db.Float, default=0.0)
     notes = db.Column(db.Text)
