@@ -147,8 +147,8 @@
                         {% for comic in recent_comics %}
                         <div class="col-md-6 col-lg-4 mb-3">
                             <div class="card h-100">
-                                {% if comic.cover_image %}
-                                <img src="{{ url_for('comics.uploaded_file', filename='thumb_' + comic.cover_image) }}" 
+                                {% if comic.has_cover_image() %}
+                                <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
                                      class="card-img-top" alt="{{ comic.title }}" style="height: 200px; object-fit: contain;">
                                 {% else %}
                                 <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 

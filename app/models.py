@@ -47,7 +47,9 @@ class Comic(db.Model):
     Contains all fields for comprehensive comic book data.
     """
     id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(200), nullable=False)
+    title = db.Column(db.String(200), nullable=False)  # Full display title (e.g., "The Amazing Spider-Man: Worldwide #1")
+    series = db.Column(db.String(200))  # Series name (e.g., "The Amazing Spider-Man")
+    issue_title = db.Column(db.String(200))  # Individual issue title (e.g., "Worldwide")
     issue_number = db.Column(db.String(20), nullable=False)
     publisher = db.Column(db.String(100), nullable=False)
     characters = db.Column(db.Text)  # Comma-separated list of characters
@@ -58,7 +60,9 @@ class Comic(db.Model):
     condition = db.Column(db.String(50))  # Mint, Near Mint, Very Fine, Fine, Good, etc.
     estimated_value = db.Column(db.Float, default=0.0)
     notes = db.Column(db.Text)
-    cover_image = db.Column(db.String(255))  # Path to uploaded image
+    cover_image = db.Column(db.LargeBinary)  # BLOB storage for primary cover image
+    cover_image_mime = db.Column(db.String(100))  # MIME type of the image
+    additional_covers = db.Column(db.Text)  # JSON string of additional cover images with BLOB data
     is_wishlist = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -88,6 +92,47 @@ class Comic(db.Model):
         if self.release_date:
             return self.release_date.strftime('%B %Y')
         return "Unknown"
+    
+    def get_additional_covers(self):
+        """Return additional covers as a list of dictionaries with BLOB data."""
+        import json
+        if self.additional_covers:
+            try:
+                return json.loads(self.additional_covers)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return []
+    
+    def set_additional_covers(self, covers_list):
+        """Set additional covers from a list of dictionaries with BLOB data."""
+        import json
+        if covers_list:
+            self.additional_covers = json.dumps(covers_list)
+        else:
+            self.additional_covers = None
+    
+    def get_all_covers(self):
+        """Return all covers including the primary cover with BLOB data."""
+        covers = []
+        if self.cover_image:
+            # Convert BLOB data to base64 for JSON serialization
+            import base64
+            blob_base64 = base64.b64encode(self.cover_image).decode('utf-8')
+            covers.append({
+                'blob_data': blob_base64,
+                'mime_type': self.cover_image_mime or 'image/jpeg',
+                'label': 'Primary Cover',
+                'is_primary': True
+            })
+        
+        additional_covers = self.get_additional_covers()
+        covers.extend(additional_covers)
+        
+        return covers
+    
+    def has_cover_image(self):
+        """Check if comic has a cover image."""
+        return self.cover_image is not None
     
     def __repr__(self):
         return f'<Comic {self.title} #{self.issue_number}>'

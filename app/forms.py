@@ -47,7 +47,10 @@ class RegistrationForm(FlaskForm):
 
 class ComicForm(FlaskForm):
     """Form for adding/editing comic books."""
-    title = StringField('Title', validators=[DataRequired(), Length(max=200)])
+    title = StringField('Title', validators=[Optional(), Length(max=200)], 
+                       description='Individual issue title (e.g., "Worldwide")')
+    series = StringField('Series', validators=[DataRequired(), Length(max=200)], 
+                        description='Series name (e.g., "The Amazing Spider-Man")')
     issue_number = StringField('Issue Number', validators=[DataRequired(), Length(max=20)])
     publisher = StringField('Publisher', validators=[DataRequired(), Length(max=100)])
     characters = TextAreaField('Characters (comma-separated)', validators=[Optional(), Length(max=500)])

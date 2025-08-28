@@ -22,8 +22,8 @@
         {% for comic in comics.items %}
         <div class="col-md-6 col-lg-4 col-xl-3 mb-4">
             <div class="card h-100 shadow-sm border-warning">
-                {% if comic.cover_image %}
-                <img src="{{ url_for('comics.uploaded_file', filename='thumb_' + comic.cover_image) }}" 
+                                {% if comic.has_cover_image() %}
+                <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}"
                      class="card-img-top" alt="{{ comic.title }}" style="height: 300px; object-fit: contain;">
                 {% else %}
                 <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 

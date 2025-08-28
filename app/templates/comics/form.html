@@ -25,8 +25,8 @@
                             <div class="col-md-8">
                                 <div class="mb-3">
                                                                          <label for="searchQuery" class="form-label">Search by Title or Barcode</label>
-                                     <input type="text" class="form-control" id="searchQuery" 
-                                            placeholder="Enter comic title (e.g., Amazing Spider-Man) or barcode number">
+                                                                         <input type="text" class="form-control" id="searchQuery" 
+                                           placeholder="Enter comic title, character, barcode, or date (e.g., Amazing Spider-Man #1 December 2015)">
                                 </div>
                             </div>
                             <div class="col-md-4">
@@ -79,6 +79,7 @@
                                             <span class="badge bg-secondary ms-1" id="barcodeLookupStatus">🔍</span>
                                         </label>
                                     </div>
+
                                     <div class="form-check form-check-inline">
                                         <input class="form-check-input" type="checkbox" id="searchLocal" checked>
                                         <label class="form-check-label" for="searchLocal">
@@ -86,10 +87,24 @@
                                             <span class="badge bg-success ms-1" id="localStatus">✓</span>
                                         </label>
                                     </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchAI">
+                                        <label class="form-check-label" for="searchAI">
+                                            <i class="bi bi-robot"></i> AI Metadata Assistant
+                                            <span class="badge bg-info ms-1" id="aiStatus">🤖</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchSmart">
+                                        <label class="form-check-label" for="searchSmart">
+                                            <i class="bi bi-lightbulb"></i> Smart Search (AI Enhanced)
+                                            <span class="badge bg-success ms-1" id="smartStatus">💡</span>
+                                        </label>
+                                    </div>
                                 </div>
                                                                                          <div class="small text-muted">
                             <i class="bi bi-info-circle"></i> 
-                            <span id="statusInfo">ComicVine and Local Database are working. Marvel API may need domain whitelisting. Open Library provides ISBN codes. UPC Database and Barcode Lookup provide UPC code searches. Local Database can search by UPC and ISBN numbers.</span>
+                            <span id="statusInfo">ComicVine and Local Database are working. Marvel API may need domain whitelisting. Open Library provides ISBN codes. UPC Database and Barcode Lookup provide UPC code searches. Local Database can search by UPC and ISBN numbers. AI Metadata Assistant provides enhanced search with structured metadata extraction. <strong>You can now search with dates like "Amazing Spider-Man #1 December 2015"!</strong></span>
                         </div>
                             </div>
                         </div>
@@ -115,18 +130,19 @@
                     {{ form.hidden_tag() }}
                     
                     <div class="row">
-                        <!-- Title and Issue Number -->
+                        <!-- Series and Issue Number -->
                         <div class="col-md-8">
                             <div class="mb-3">
-                                {{ form.title.label(class="form-label") }}
-                                {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else ""), id="comicTitle") }}
-                                {% if form.title.errors %}
+                                {{ form.series.label(class="form-label") }}
+                                {{ form.series(class="form-control" + (" is-invalid" if form.series.errors else ""), placeholder="e.g., The Amazing Spider-Man", id="comicSeries") }}
+                                {% if form.series.errors %}
                                     <div class="invalid-feedback">
-                                        {% for error in form.title.errors %}
+                                        {% for error in form.series.errors %}
                                             {{ error }}
                                         {% endfor %}
                                     </div>
                                 {% endif %}
+                                <div class="form-text">Series name (e.g., "The Amazing Spider-Man")</div>
                             </div>
                         </div>
                         <div class="col-md-4">
@@ -140,6 +156,24 @@
                                         {% endfor %}
                                     </div>
                                 {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <!-- Title -->
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                {{ form.title.label(class="form-label") }}
+                                {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else ""), placeholder="e.g., Worldwide", id="comicTitle") }}
+                                {% if form.title.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.title.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text">Individual issue title (e.g., "Worldwide")</div>
                             </div>
                         </div>
                     </div>
@@ -255,7 +289,10 @@
                         {{ form.estimated_value.label(class="form-label") }}
                         <div class="input-group">
                             <span class="input-group-text">$</span>
-                            {{ form.estimated_value(class="form-control" + (" is-invalid" if form.estimated_value.errors else ""), type="number", step="0.01", min="0") }}
+                            {{ form.estimated_value(class="form-control" + (" is-invalid" if form.estimated_value.errors else ""), type="number", step="0.01", min="0", placeholder="0.00", id="estimatedValueField") }}
+                            <button type="button" class="btn btn-outline-primary" id="valueLookupBtn" title="AI Value Lookup">
+                                <i class="bi bi-robot"></i>
+                            </button>
                             {% if form.estimated_value.errors %}
                                 <div class="invalid-feedback">
                                     {% for error in form.estimated_value.errors %}
@@ -263,6 +300,9 @@
                                     {% endfor %}
                                 </div>
                             {% endif %}
+                        </div>
+                        <div class="form-text">
+                            <i class="bi bi-info-circle"></i> Click the AI icon to automatically estimate the comic's value based on series, condition, UPC code, and title. Uses conservative estimates from the lower end of market ranges. Values are automatically formatted as currency.
                         </div>
                     </div>
                     
@@ -279,11 +319,11 @@
                         {% endif %}
                         <div class="form-text">Upload a cover image (JPG, PNG, GIF - max 16MB)</div>
                         
-                        {% if comic and comic.cover_image %}
+                        {% if comic and comic.has_cover_image() %}
                         <div class="mt-2">
                             <small class="text-muted">Current cover image:</small>
-                                                         <img src="{{ url_for('comics.uploaded_file', filename='thumb_' + comic.cover_image) }}" 
-                                  alt="Current cover" class="img-thumbnail" style="max-height: 100px;">
+                            <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
+                                 alt="Current cover" class="img-thumbnail" style="max-height: 100px;">
                         </div>
                         {% endif %}
                     </div>
@@ -332,6 +372,8 @@
 <!-- Comic Search JavaScript -->
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, initializing search...');
+    
     const searchBtn = document.getElementById('searchBtn');
     const searchQuery = document.getElementById('searchQuery');
     const searchResults = document.getElementById('searchResults');
@@ -339,8 +381,18 @@ document.addEventListener('DOMContentLoaded', function() {
     const searchLoading = document.getElementById('searchLoading');
     const searchError = document.getElementById('searchError');
     
+    console.log('Search elements found:', {
+        searchBtn: !!searchBtn,
+        searchQuery: !!searchQuery,
+        searchResults: !!searchResults,
+        resultsList: !!resultsList,
+        searchLoading: !!searchLoading,
+        searchError: !!searchError
+    });
+    
     // Form fields
-    const titleField = document.getElementById('comicTitle');
+    const titleField = document.getElementById('comicTitle');  // Individual issue title
+    const seriesField = document.getElementById('comicSeries');  // Series name
     const issueField = document.getElementById('comicIssueNumber');
     const publisherField = document.getElementById('comicPublisher');
     const genreField = document.getElementById('comicGenre');
@@ -350,7 +402,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const releaseDateField = document.getElementById('comicReleaseDate');
     
     searchBtn.addEventListener('click', function() {
+        console.log('Search button clicked');
         const query = searchQuery.value.trim();
+        console.log('Search query:', query);
         if (!query) {
             showError('Please enter a search term');
             return;
@@ -362,10 +416,12 @@ document.addEventListener('DOMContentLoaded', function() {
         const searchGCD = document.getElementById('searchGCD').checked;
         const searchUPCDatabase = document.getElementById('searchUPCDatabase').checked;
         const searchBarcodeLookup = document.getElementById('searchBarcodeLookup').checked;
+        const searchAI = document.getElementById('searchAI').checked;
+        const searchSmart = document.getElementById('searchSmart').checked;
         const searchLocal = document.getElementById('searchLocal').checked;
         
         // Check if at least one source is selected
-        if (!searchComicVine && !searchMarvel && !searchGCD && !searchUPCDatabase && !searchBarcodeLookup && !searchLocal) {
+        if (!searchComicVine && !searchMarvel && !searchGCD && !searchUPCDatabase && !searchBarcodeLookup && !searchAI && !searchSmart && !searchLocal) {
             showError('Please select at least one search source');
             return;
         }
@@ -383,6 +439,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (searchGCD) sources.push('Open Library (ISBN)');
         if (searchUPCDatabase) sources.push('UPC Database');
         if (searchBarcodeLookup) sources.push('Barcode Lookup');
+        if (searchAI) sources.push('AI Metadata Assistant');
+        if (searchSmart) sources.push('Smart Search (AI Enhanced)');
         if (searchLocal) sources.push('Local Database');
         loadingText.textContent = `Searching ${sources.join(', ')}...`;
         
@@ -394,12 +452,14 @@ document.addEventListener('DOMContentLoaded', function() {
             gcd: searchGCD ? '1' : '0',
             upc_database: searchUPCDatabase ? '1' : '0',
             barcode_lookup: searchBarcodeLookup ? '1' : '0',
+            ai_search: searchAI ? '1' : '0',
+            smart_search: searchSmart ? '1' : '0',
             local: searchLocal ? '1' : '0'
         });
         
         // Make API request
         console.log('Searching for:', query);
-        console.log('Search sources:', { comicvine: searchComicVine, marvel: searchMarvel, gcd: searchGCD, upc_database: searchUPCDatabase, barcode_lookup: searchBarcodeLookup, local: searchLocal });
+        console.log('Search sources:', { comicvine: searchComicVine, marvel: searchMarvel, gcd: searchGCD, upc_database: searchUPCDatabase, barcode_lookup: searchBarcodeLookup, ai_search: searchAI, smart_search: searchSmart, local: searchLocal });
         fetch(`/comics/search-api?${params.toString()}`)
             .then(response => {
                 console.log('Response status:', response.status);
@@ -438,7 +498,7 @@ document.addEventListener('DOMContentLoaded', function() {
         results.forEach((comic, index) => {
             console.log('Processing comic:', comic);
             const resultItem = document.createElement('div');
-            resultItem.className = 'list-group-item list-group-item-action';
+            resultItem.className = `list-group-item list-group-item-action${comic.ai_enhanced ? ' border-info' : ''}`;
             
             const title = comic.title || 'Unknown Title';
             const issue = comic.issue_number || 'Unknown Issue';
@@ -456,14 +516,18 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="flex-grow-1">
                             <h6 class="mb-1">${title} #${issue}</h6>
                             <p class="mb-1 text-muted">${publisher}${volume ? ' - ' + volume : ''}</p>
-                            ${comic.release_date ? `<small class="text-success"><i class="bi bi-calendar"></i> Release: ${formatDate(comic.release_date)}</small><br>` : ''}
+                            ${comic.volume ? `<small class="text-warning"><i class="bi bi-book"></i> <strong>${comic.volume}</strong></small><br>` : ''}
+                            ${comic.release_date ? `<small class="text-primary"><i class="bi bi-calendar"></i> <strong>Release: ${formatDate(comic.release_date)}</strong></small><br>` : ''}
                             ${comic.characters ? `<small class="text-muted">Characters: ${comic.characters}</small><br>` : ''}
+                            ${comic.writers && comic.writers.length > 0 ? `<small class="text-muted">Writers: ${comic.writers.join(', ')}</small><br>` : ''}
+                            ${comic.artists && comic.artists.length > 0 ? `<small class="text-muted">Artists: ${comic.artists.join(', ')}</small><br>` : ''}
+                            ${comic.variant_cover_name ? `<small class="text-warning"><i class="bi bi-image"></i> Variant: ${comic.variant_cover_name}</small><br>` : ''}
                             ${comic.upc ? `<small class="text-info"><i class="bi bi-upc-scan"></i> UPC: ${comic.upc}</small><br>` : ''}
                             ${comic.isbn ? `<small class="text-info"><i class="bi bi-book"></i> ISBN: ${comic.isbn}</small><br>` : ''}
-                            ${comic.source ? `<small class="text-secondary">Source: ${comic.source}</small>` : ''}
+                            ${comic.source ? `<small class="text-secondary">Source: ${comic.source}${comic.ai_enhanced ? ' <i class="bi bi-robot text-info"></i>' : ''}${comic.needs_details ? ' <span class="badge bg-warning">Needs Details</span>' : ''}</small>` : ''}
                         </div>
                     </div>
-                    <button type="button" class="btn btn-sm btn-primary" onclick="selectComic(${index})">
+                    <button type="button" class="btn btn-sm btn-primary select-comic-btn" data-index="${index}">
                         <i class="bi bi-check"></i> Select
                     </button>
                 </div>
@@ -475,11 +539,190 @@ document.addEventListener('DOMContentLoaded', function() {
         // Store results for selection
         window.searchResults = results;
         searchResults.classList.remove('d-none');
+        
+        // Add event listeners for select buttons
+        resultsList.querySelectorAll('.select-comic-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const index = parseInt(this.getAttribute('data-index'));
+                selectComic(index);
+            });
+        });
     }
     
     function showError(message) {
         searchError.textContent = message;
         searchError.classList.remove('d-none');
+    }
+    
+    function showDetailsPrompt(comic) {
+        // Create modal for additional details
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.id = 'detailsModal';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="bi bi-robot"></i> AI Metadata Assistant - Additional Details Needed
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i> 
+                            The AI found basic information for <strong>${comic.title} #${comic.issue_number}</strong>, 
+                            but could use additional details to provide more comprehensive metadata.
+                            <br><small class="text-muted">Release dates are especially important for distinguishing between different series of the same comic.</small>
+                        </div>
+                        
+                        <form id="detailsForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Release Date</label>
+                                        <input type="date" class="form-control" id="modalReleaseDate" placeholder="YYYY-MM-DD">
+                                        <small class="form-text text-muted">
+                                            <strong>Quick Date Suggestions:</strong><br>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('1968-05-01')">1968 (Original)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('1996-01-01')">1996 (Vol 2)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('2004-01-01')">2004 (Vol 3)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('2008-01-01')">2008 (Vol 4)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('2012-01-01')">2012 (Modern)</button>
+                                        </small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">UPC Code</label>
+                                        <input type="text" class="form-control" id="modalUPC" placeholder="12-13 digit UPC">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">ISBN</label>
+                                        <input type="text" class="form-control" id="modalISBN" placeholder="ISBN code">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Genre</label>
+                                        <input type="text" class="form-control" id="modalGenre" placeholder="e.g., Superhero, Action, Horror">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Characters</label>
+                                <input type="text" class="form-control" id="modalCharacters" placeholder="e.g., Spider-Man, Peter Parker, Mary Jane">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Description</label>
+                                <textarea class="form-control" id="modalDescription" rows="3" placeholder="Brief description of the comic..."></textarea>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Writers</label>
+                                        <input type="text" class="form-control" id="modalWriters" placeholder="e.g., Stan Lee, Steve Ditko">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Artists</label>
+                                        <input type="text" class="form-control" id="modalArtists" placeholder="e.g., Steve Ditko, John Romita">
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Skip</button>
+                        <button type="button" class="btn btn-primary" onclick="applyDetails()">
+                            <i class="bi bi-check"></i> Apply Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Show the modal
+        const bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+        
+        // Store the comic data for later use
+        window.currentComicDetails = comic;
+        
+        // Clean up modal when hidden
+        modal.addEventListener('hidden.bs.modal', function() {
+            document.body.removeChild(modal);
+        });
+    }
+    
+    function applyDetails() {
+        const comic = window.currentComicDetails;
+        if (!comic) return;
+        
+        // Get values from modal
+        const releaseDate = document.getElementById('modalReleaseDate').value;
+        const upc = document.getElementById('modalUPC').value;
+        const isbn = document.getElementById('modalISBN').value;
+        const genre = document.getElementById('modalGenre').value;
+        const characters = document.getElementById('modalCharacters').value;
+        const description = document.getElementById('modalDescription').value;
+        const writers = document.getElementById('modalWriters').value;
+        const artists = document.getElementById('modalArtists').value;
+        
+        // Update form fields with enhanced data
+        if (releaseDate) {
+            releaseDateField.value = releaseDate;
+        }
+        if (upc) {
+            upcField.value = upc;
+        }
+        if (isbn) {
+            isbnField.value = isbn;
+        }
+        if (genre) {
+            genreField.value = genre;
+        }
+        if (characters) {
+            charactersField.value = characters;
+        }
+        if (description) {
+            // Update the description if there's a description field
+            const descField = document.getElementById('comicDescription');
+            if (descField) {
+                descField.value = description;
+            }
+        }
+        
+        // Show success message
+        const successMsg = document.createElement('div');
+        successMsg.className = 'alert alert-success mt-2';
+        successMsg.innerHTML = '<i class="bi bi-check-circle"></i> Additional details applied successfully!';
+        titleField.parentNode.parentNode.appendChild(successMsg);
+        
+        // Remove message after 5 seconds
+        setTimeout(() => successMsg.remove(), 5000);
+        
+        // Close modal
+        const modal = document.getElementById('detailsModal');
+        if (modal) {
+            const bsModal = bootstrap.Modal.getInstance(modal);
+            bsModal.hide();
+        }
+    }
+    
+    function setQuickDate(dateString) {
+        document.getElementById('modalReleaseDate').value = dateString;
     }
     
     // Helper function to format dates
@@ -510,15 +753,34 @@ document.addEventListener('DOMContentLoaded', function() {
     // Global function to select a comic
     window.selectComic = function(index) {
         const comic = window.searchResults[index];
+        console.log('selectComic called with comic:', comic);
         
         // Fill form fields
-        titleField.value = comic.title || '';
+        titleField.value = comic.title || '';  // Individual issue title (e.g., "Worldwide")
+        seriesField.value = comic.series || '';  // Series name (e.g., "The Amazing Spider-Man")
         issueField.value = comic.issue_number || '';
         publisherField.value = comic.publisher || '';
         genreField.value = comic.genre || '';
         charactersField.value = comic.characters || '';
         upcField.value = comic.upc || '';
         isbnField.value = comic.isbn || '';
+        
+        // Handle AI-enhanced data
+        if (comic.ai_enhanced) {
+            // Show AI enhancement indicator
+            const aiIndicator = document.createElement('div');
+            aiIndicator.className = 'alert alert-info mt-2';
+            aiIndicator.innerHTML = '<i class="bi bi-robot"></i> This data was enhanced by AI Metadata Assistant';
+            titleField.parentNode.parentNode.appendChild(aiIndicator);
+            
+            // Remove indicator after 5 seconds
+            setTimeout(() => aiIndicator.remove(), 5000);
+            
+            // If AI result needs more details, show a prompt
+            if (comic.needs_details) {
+                showDetailsPrompt(comic);
+            }
+        }
         
         // Format and set release date
         if (comic.release_date) {
@@ -528,9 +790,23 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
         
-        // Fetch cover image if available
-        if (comic.cover_image_url) {
+        // Handle cover images
+        console.log('Cover images check:', {
+            cover_images: comic.cover_images,
+            cover_images_length: comic.cover_images ? comic.cover_images.length : 0,
+            cover_image_url: comic.cover_image_url
+        });
+        
+        if (comic.cover_images && comic.cover_images.length > 0) {
+            console.log('Showing cover selection modal with', comic.cover_images.length, 'covers');
+            // Show cover selection modal for any available covers
+            showCoverSelectionModal(comic.cover_images, comic.title);
+        } else if (comic.cover_image_url) {
+            console.log('Fetching single cover image');
+            // Single cover - fetch directly
             fetchCoverImage(comic.cover_image_url);
+        } else {
+            console.log('No cover images found');
         }
         
         // Hide search results
@@ -540,20 +816,431 @@ document.addEventListener('DOMContentLoaded', function() {
         titleField.scrollIntoView({ behavior: 'smooth' });
     };
     
+    function showCoverSelectionModal(coverImages, comicTitle) {
+        // Create modal if it doesn't exist
+        let modal = document.getElementById('coverSelectionModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.id = 'coverSelectionModal';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Select Cover Image for "${comicTitle}"</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="text-muted mb-3">Multiple cover images available. Select one as primary cover or download all:</p>
+                            <div class="mb-3">
+                                                    <button type="button" class="btn btn-success me-2" id="downloadAllCoversBtn">
+                        <i class="bi bi-download"></i> Download All Covers
+                    </button>
+                    <button type="button" class="btn btn-primary" id="selectCoverFromModalBtn">
+                        <i class="bi bi-check-circle"></i> Use Selected Cover
+                    </button>
+                            </div>
+                            <div id="coverOptions" class="row g-3">
+                                <!-- Cover options will be inserted here -->
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        // Populate cover options
+        const coverOptions = document.getElementById('coverOptions');
+        coverOptions.innerHTML = '';
+        
+        coverImages.forEach((cover, index) => {
+            const coverCard = document.createElement('div');
+            coverCard.className = 'col-md-4 col-sm-6';
+            coverCard.innerHTML = `
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="selectedCover" 
+                                   id="cover${index}" value="${cover.url}" 
+                                   ${index === 0 ? 'checked' : ''}>
+                            <label class="form-check-label" for="cover${index}">
+                                <strong>${cover.label}</strong>
+                            </label>
+                        </div>
+                        <img src="${cover.url}" class="img-fluid mb-2" alt="${cover.label}" 
+                             style="max-height: 250px; object-fit: contain; border: 2px solid #dee2e6; border-radius: 8px;">
+                        <div class="d-grid gap-1">
+                            <button type="button" class="btn btn-outline-primary btn-sm download-cover-btn" 
+                                    data-url="${cover.url}" data-label="${cover.label}">
+                                <i class="bi bi-download"></i> Download This Cover
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Add event listener for download button
+            const downloadBtn = coverCard.querySelector('.download-cover-btn');
+            downloadBtn.addEventListener('click', function() {
+                const url = this.getAttribute('data-url');
+                const label = this.getAttribute('data-label');
+                downloadCover(url, label);
+            });
+            
+            coverOptions.appendChild(coverCard);
+        });
+        
+        // Show modal
+        const bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+        
+        // Add event listeners for modal buttons
+        document.getElementById('downloadAllCoversBtn').addEventListener('click', downloadAllCovers);
+        document.getElementById('selectCoverFromModalBtn').addEventListener('click', selectCoverFromModal);
+    }
+    
+    // Make function globally accessible
+    window.selectCoverFromModal = function() {
+        // Get the selected cover
+        const selectedCover = document.querySelector('input[name="selectedCover"]:checked');
+        if (!selectedCover) {
+            alert('Please select a cover image first.');
+            return;
+        }
+        
+        const imageUrl = selectedCover.value;
+        const label = selectedCover.nextElementSibling.textContent.trim();
+        
+        // Show loading state
+        const loadingMsg = document.createElement('div');
+        loadingMsg.className = 'alert alert-info mt-2';
+        loadingMsg.innerHTML = `<i class="bi bi-arrow-clockwise"></i> Downloading ${label}...`;
+        titleField.parentNode.appendChild(loadingMsg);
+        
+        // Fetch the cover
+        fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
+            .then(response => response.json())
+            .then(data => {
+                loadingMsg.remove();
+                
+                if (data.blob_data) {
+                    // Create hidden inputs to store the BLOB data and MIME type
+                    let blobInput = document.querySelector('input[name="fetched_cover_blob"]');
+                    if (!blobInput) {
+                        blobInput = document.createElement('input');
+                        blobInput.type = 'hidden';
+                        blobInput.name = 'fetched_cover_blob';
+                        document.querySelector('form').appendChild(blobInput);
+                    }
+                    blobInput.value = data.blob_data;
+                    
+                    let mimeInput = document.querySelector('input[name="fetched_cover_mime"]');
+                    if (!mimeInput) {
+                        mimeInput = document.createElement('input');
+                        mimeInput.type = 'hidden';
+                        mimeInput.name = 'fetched_cover_mime';
+                        document.querySelector('form').appendChild(mimeInput);
+                    }
+                    mimeInput.value = data.mime_type;
+                    
+                    // Show success message
+                    const successMsg = document.createElement('div');
+                    successMsg.className = 'alert alert-success mt-2';
+                    successMsg.innerHTML = `<i class="bi bi-check-circle"></i> ${label} selected and downloaded successfully!`;
+                    titleField.parentNode.appendChild(successMsg);
+                    
+                    // Remove message after 3 seconds
+                    setTimeout(() => successMsg.remove(), 3000);
+                    
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('coverSelectionModal'));
+                    if (modal) {
+                        modal.hide();
+                    }
+                }
+            })
+        .catch(error => {
+            loadingMsg.remove();
+            const errorMsg = document.createElement('div');
+            errorMsg.className = 'alert alert-danger mt-2';
+            errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Error downloading cover: ${error.message}`;
+            titleField.parentNode.appendChild(errorMsg);
+            setTimeout(() => errorMsg.remove(), 5000);
+        });
+    }
+    
+    function downloadCover(imageUrl, label) {
+        // Show loading state
+        const loadingMsg = document.createElement('div');
+        loadingMsg.className = 'alert alert-info mt-2';
+        loadingMsg.innerHTML = `<i class="bi bi-arrow-clockwise"></i> Downloading ${label}...`;
+        titleField.parentNode.appendChild(loadingMsg);
+        
+        // Fetch the cover
+        fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
+            .then(response => response.json())
+            .then(data => {
+                loadingMsg.remove();
+                
+                if (data.blob_data) {
+                    // Create hidden inputs to store the BLOB data and MIME type
+                    let blobInput = document.querySelector('input[name="fetched_cover_blob"]');
+                    if (!blobInput) {
+                        blobInput = document.createElement('input');
+                        blobInput.type = 'hidden';
+                        blobInput.name = 'fetched_cover_blob';
+                        document.querySelector('form').appendChild(blobInput);
+                    }
+                    blobInput.value = data.blob_data;
+                    
+                    let mimeInput = document.querySelector('input[name="fetched_cover_mime"]');
+                    if (!mimeInput) {
+                        mimeInput = document.createElement('input');
+                        mimeInput.type = 'hidden';
+                        mimeInput.name = 'fetched_cover_mime';
+                        document.querySelector('form').appendChild(mimeInput);
+                    }
+                    mimeInput.value = data.mime_type;
+                    
+                    // Show success message
+                    const successMsg = document.createElement('div');
+                    successMsg.className = 'alert alert-success mt-2';
+                    successMsg.innerHTML = `<i class="bi bi-check-circle"></i> ${label} downloaded successfully!`;
+                    titleField.parentNode.appendChild(successMsg);
+                    
+                    // Remove message after 3 seconds
+                    setTimeout(() => successMsg.remove(), 3000);
+                    
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('coverSelectionModal'));
+                    if (modal) {
+                        modal.hide();
+                    }
+                }
+            })
+            .catch(error => {
+                loadingMsg.remove();
+                console.error('Failed to fetch cover image:', error);
+                
+                const errorMsg = document.createElement('div');
+                errorMsg.className = 'alert alert-danger mt-2';
+                errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Failed to download ${label}`;
+                titleField.parentNode.appendChild(errorMsg);
+                
+                setTimeout(() => errorMsg.remove(), 3000);
+            });
+    }
+    
+    function downloadAllCovers() {
+        const modal = document.getElementById('coverSelectionModal');
+        const coverOptions = document.getElementById('coverOptions');
+        const covers = Array.from(coverOptions.querySelectorAll('.card')).map((card, index) => {
+            const img = card.querySelector('img');
+            const label = card.querySelector('.card-title').textContent;
+            return {
+                url: img.src,
+                label: label
+            };
+        });
+        
+        if (covers.length === 0) return;
+        
+        // Show loading state
+        const loadingMsg = document.createElement('div');
+        loadingMsg.className = 'alert alert-info mt-2';
+        loadingMsg.innerHTML = `<i class="bi bi-arrow-clockwise"></i> Downloading all ${covers.length} cover images...`;
+        titleField.parentNode.appendChild(loadingMsg);
+        
+        // Download all covers
+        fetch('/comics/fetch-multiple-covers', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                cover_images: covers
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            loadingMsg.remove();
+            
+            if (data.success) {
+                // Store all downloaded covers for selection
+                window.downloadedCovers = data.covers;
+                
+                // Show success message
+                const successMsg = document.createElement('div');
+                successMsg.className = 'alert alert-success mt-2';
+                successMsg.innerHTML = `<i class="bi bi-check-circle"></i> ${data.message}`;
+                titleField.parentNode.appendChild(successMsg);
+                
+                // Show cover selection interface
+                showDownloadedCoversSelection(data.covers);
+                
+                // Remove message after 5 seconds
+                setTimeout(() => successMsg.remove(), 5000);
+                
+                // Close modal
+                const bsModal = bootstrap.Modal.getInstance(modal);
+                if (bsModal) {
+                    bsModal.hide();
+                }
+            } else {
+                throw new Error(data.error || 'Failed to download covers');
+            }
+        })
+        .catch(error => {
+            loadingMsg.remove();
+            console.error('Failed to download covers:', error);
+            
+            const errorMsg = document.createElement('div');
+            errorMsg.className = 'alert alert-danger mt-2';
+            errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Failed to download covers: ${error.message}`;
+            titleField.parentNode.appendChild(errorMsg);
+            
+            setTimeout(() => errorMsg.remove(), 5000);
+        });
+    }
+    
+    function showDownloadedCoversSelection(covers) {
+        // Create selection interface
+        const selectionDiv = document.createElement('div');
+        selectionDiv.className = 'mt-3 p-3 border rounded bg-light';
+        selectionDiv.innerHTML = `
+            <h6><i class="bi bi-images"></i> Select Cover Image</h6>
+            <p class="text-muted small">Choose which cover image to use as the primary cover for this comic:</p>
+            <div class="row g-2">
+                ${covers.map((cover, index) => `
+                    <div class="col-md-4 col-sm-6">
+                        <div class="card h-100">
+                            <div class="card-body text-center">
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="radio" name="selectedDownloadedCover" 
+                                           id="downloadedCover${index}" value="${cover.filename}" 
+                                           ${index === 0 ? 'checked' : ''}>
+                                    <label class="form-check-label" for="downloadedCover${index}">
+                                        <strong>${cover.label}</strong>
+                                    </label>
+                                </div>
+                                <img src="/uploads/${cover.filename}" class="img-fluid mb-2" alt="${cover.label}" 
+                                     style="max-height: 200px; object-fit: contain; border: 2px solid #dee2e6; border-radius: 8px;">
+                                <div class="d-grid">
+                                    <button type="button" class="btn btn-primary btn-sm use-cover-btn" data-filename="${cover.filename}">
+                                        <i class="bi bi-check"></i> Use This Cover
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="mt-3 text-center">
+                <button type="button" class="btn btn-success" id="selectDownloadedCoverFromRadioBtn">
+                    <i class="bi bi-check-circle"></i> Use Selected Cover
+                </button>
+            </div>
+        `;
+        
+        titleField.parentNode.appendChild(selectionDiv);
+        
+        // Add event listeners for the use cover buttons
+        selectionDiv.querySelectorAll('.use-cover-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const filename = this.getAttribute('data-filename');
+                selectDownloadedCover(filename);
+            });
+        });
+        
+        // Add event listener for the radio selection button
+        selectionDiv.querySelector('#selectDownloadedCoverFromRadioBtn').addEventListener('click', selectDownloadedCoverFromRadio);
+        
+        // Store reference for cleanup
+        window.coverSelectionDiv = selectionDiv;
+    }
+    
+    function selectDownloadedCoverFromRadio() {
+        // Get the selected cover from radio button
+        const selectedCover = document.querySelector('input[name="selectedDownloadedCover"]:checked');
+        if (!selectedCover) {
+            alert('Please select a cover image first.');
+            return;
+        }
+        
+        const filename = selectedCover.value;
+        selectDownloadedCover(filename);
+    }
+    
+    function selectDownloadedCover(filename) {
+        // Set the selected cover as primary
+        let hiddenInput = document.querySelector('input[name="fetched_cover"]');
+        if (!hiddenInput) {
+            hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = 'fetched_cover';
+            document.querySelector('form').appendChild(hiddenInput);
+        }
+        hiddenInput.value = filename;
+        
+        // Store other covers as additional covers
+        if (window.downloadedCovers && window.downloadedCovers.length > 1) {
+            const additionalCovers = window.downloadedCovers.filter(cover => cover.filename !== filename);
+            
+            if (additionalCovers.length > 0) {
+                let additionalInput = document.querySelector('input[name="additional_covers"]');
+                if (!additionalInput) {
+                    additionalInput = document.createElement('input');
+                    additionalInput.type = 'hidden';
+                    additionalInput.name = 'additional_covers';
+                    document.querySelector('form').appendChild(additionalInput);
+                }
+                additionalInput.value = JSON.stringify(additionalCovers);
+            }
+        }
+        
+        // Show success message
+        const successMsg = document.createElement('div');
+        successMsg.className = 'alert alert-success mt-2';
+        successMsg.innerHTML = `<i class="bi bi-check-circle"></i> Cover image selected! All covers will be saved.`;
+        titleField.parentNode.appendChild(successMsg);
+        
+        // Remove message after 3 seconds
+        setTimeout(() => successMsg.remove(), 3000);
+        
+        // Remove the selection interface
+        if (window.coverSelectionDiv) {
+            window.coverSelectionDiv.remove();
+            window.coverSelectionDiv = null;
+        }
+    }
+    
     function fetchCoverImage(imageUrl) {
         fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
             .then(response => response.json())
             .then(data => {
-                if (data.filename) {
-                    // Create a hidden input to store the fetched image filename
-                    let hiddenInput = document.querySelector('input[name="fetched_cover"]');
-                    if (!hiddenInput) {
-                        hiddenInput = document.createElement('input');
-                        hiddenInput.type = 'hidden';
-                        hiddenInput.name = 'fetched_cover';
-                        document.querySelector('form').appendChild(hiddenInput);
+                if (data.blob_data) {
+                    // Create hidden inputs to store the BLOB data and MIME type
+                    let blobInput = document.querySelector('input[name="fetched_cover_blob"]');
+                    if (!blobInput) {
+                        blobInput = document.createElement('input');
+                        blobInput.type = 'hidden';
+                        blobInput.name = 'fetched_cover_blob';
+                        document.querySelector('form').appendChild(blobInput);
                     }
-                    hiddenInput.value = data.filename;
+                    blobInput.value = data.blob_data;
+                    
+                    let mimeInput = document.querySelector('input[name="fetched_cover_mime"]');
+                    if (!mimeInput) {
+                        mimeInput = document.createElement('input');
+                        mimeInput.type = 'hidden';
+                        mimeInput.name = 'fetched_cover_mime';
+                        document.querySelector('form').appendChild(mimeInput);
+                    }
+                    mimeInput.value = data.mime_type;
                     
                     // Show success message
                     const successMsg = document.createElement('div');
@@ -577,6 +1264,121 @@ document.addEventListener('DOMContentLoaded', function() {
             searchBtn.click();
         }
     });
+    
+    // AI Value Lookup functionality
+    const valueLookupBtn = document.getElementById('valueLookupBtn');
+    const estimatedValueField = document.getElementById('estimatedValueField');
+    
+    // Currency formatting function
+    function formatAsCurrency(value) {
+        if (!value) return '';
+        const num = parseFloat(value);
+        if (isNaN(num)) return value;
+        return num.toFixed(2);
+    }
+    
+    // Format existing value on page load
+    if (estimatedValueField && estimatedValueField.value) {
+        estimatedValueField.value = formatAsCurrency(estimatedValueField.value);
+    }
+    
+    // Format value when user manually enters a value
+    if (estimatedValueField) {
+        estimatedValueField.addEventListener('blur', function() {
+            if (this.value) {
+                this.value = formatAsCurrency(this.value);
+            }
+        });
+        
+        // Also format on input for real-time feedback
+        estimatedValueField.addEventListener('input', function() {
+            const cursorPos = this.selectionStart;
+            const value = this.value.replace(/[^\d.]/g, '');
+            if (value && !isNaN(parseFloat(value))) {
+                const formatted = formatAsCurrency(value);
+                if (formatted !== value) {
+                    this.value = formatted;
+                    // Try to maintain cursor position
+                    this.setSelectionRange(cursorPos, cursorPos);
+                }
+            }
+        });
+    }
+    
+    if (valueLookupBtn && estimatedValueField) {
+        valueLookupBtn.addEventListener('click', function() {
+            // Get comic details for the lookup
+            const series = document.getElementById('comicSeries')?.value || '';
+            const title = document.getElementById('comicTitle')?.value || '';
+            const issueNumber = document.getElementById('comicIssueNumber')?.value || '';
+            const publisher = document.getElementById('comicPublisher')?.value || '';
+            const condition = document.getElementById('comicCondition')?.value || '';
+            
+            if (!series && !title && !issueNumber) {
+                alert('Please fill in at least the Series, Title, or Issue Number before using AI value lookup.');
+                return;
+            }
+            
+            // Show loading state
+            valueLookupBtn.disabled = true;
+            valueLookupBtn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+            
+            // Prepare comic info for AI lookup
+            const comicInfo = {
+                series: series,
+                title: title,
+                issue_number: issueNumber,
+                publisher: publisher,
+                condition: condition,
+                upc: document.getElementById('comicUPC')?.value || ''
+            };
+            
+            // Call AI value lookup API
+            fetch('/comics/ai-value-lookup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(comicInfo)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Format the value as currency and set it in the field
+                    const formattedValue = parseFloat(data.estimated_value).toFixed(2);
+                    estimatedValueField.value = formattedValue;
+                    
+                    // Show success message with currency formatting
+                    const successMsg = document.createElement('div');
+                    successMsg.className = 'alert alert-success mt-2';
+                    successMsg.innerHTML = `<i class="bi bi-check-circle"></i> AI estimated value: $${parseFloat(data.estimated_value).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${data.confidence_level})`;
+                    estimatedValueField.parentNode.parentNode.appendChild(successMsg);
+                    
+                    // Remove message after 5 seconds
+                    setTimeout(() => successMsg.remove(), 5000);
+                } else {
+                    throw new Error(data.error || 'Failed to get AI estimate');
+                }
+            })
+            .catch(error => {
+                console.error('AI value lookup error:', error);
+                
+                // Show error message
+                const errorMsg = document.createElement('div');
+                errorMsg.className = 'alert alert-warning mt-2';
+                errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Could not get AI estimate: ${error.message}. Please enter a value manually.`;
+                estimatedValueField.parentNode.parentNode.appendChild(errorMsg);
+                
+                // Remove message after 5 seconds
+                setTimeout(() => errorMsg.remove(), 5000);
+            })
+            .finally(() => {
+                // Reset button state
+                valueLookupBtn.disabled = false;
+                valueLookupBtn.innerHTML = '<i class="bi bi-robot"></i>';
+            });
+        });
+    }
 });
 </script>
 {% endblock %}
