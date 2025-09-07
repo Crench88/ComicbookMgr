@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
 # C extensions
 *.so
@@ -133,6 +134,28 @@ instance/
 *.db
 *.sqlite
 *.sqlite3
+
+# Security and secrets
+.env.production
+.env.local
+.env.staging
+*.key
+*.pem
+secrets/
+
+# Test and development files
+test_*.py
+*_test.py
+debug_*.py
+temp_*.py
+*.tmp
+*.temp
+
+# Development utilities
+add_*.py
+check_*.py
+create_*.py
+setup_*.py
 
 # Uploaded files
 static/uploads/

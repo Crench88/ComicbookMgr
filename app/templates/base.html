@@ -60,6 +60,19 @@
                             <li><a class="dropdown-item" href="{{ url_for('comics.export') }}">
                                 <i class="bi bi-download"></i> Export Collection
                             </a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard.profile') }}">
+                                <i class="bi bi-gear"></i> Profile & Settings
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <div class="dropdown-item d-flex align-items-center justify-content-between">
+                                    <span><i class="bi bi-moon-stars"></i> Dark Mode</span>
+                                    <label class="dark-mode-toggle mb-0">
+                                        <input type="checkbox" id="darkModeToggleDropdown" {% if current_user.is_authenticated and current_user.dark_mode_preference %}checked{% endif %}>
+                                        <span class="dark-mode-slider"></span>
+                                    </label>
+                                </div>
+                            </li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}">
                                 <i class="bi bi-box-arrow-right"></i> Logout
@@ -72,6 +85,15 @@
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('auth.register') }}">Register</a>
+                    </li>
+                    <li class="nav-item">
+                        <div class="nav-link d-flex align-items-center">
+                            <span class="me-2"><i class="bi bi-moon-stars"></i></span>
+                            <label class="dark-mode-toggle mb-0">
+                                <input type="checkbox" id="darkModeToggleNav">
+                                <span class="dark-mode-slider"></span>
+                            </label>
+                        </div>
                     </li>
                     {% endif %}
                 </ul>
@@ -114,6 +136,12 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    
+    <!-- User preferences for JavaScript -->
+    <script>
+        var currentUserAuthenticated = {% if current_user.is_authenticated %}true{% else %}false{% endif %};
+        var currentUserDarkMode = {% if current_user.is_authenticated and current_user.dark_mode_preference %}true{% else %}false{% endif %};
+    </script>
     
     {% block extra_js %}{% endblock %}
 </body>

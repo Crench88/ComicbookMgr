@@ -45,6 +45,31 @@ class RegistrationForm(FlaskForm):
             if user:
                 raise ValidationError('Email already registered. Please use a different one.')
 
+class ForgotPasswordForm(FlaskForm):
+    """Form for requesting password reset."""
+    email = StringField('Email', validators=[DataRequired(), Email()])
+    submit = SubmitField('Send Reset Link')
+    
+    def validate_email(self, email):
+        """Check if email exists in the system."""
+        if User and db:
+            user = User.query.filter_by(email=email.data).first()
+            if not user:
+                raise ValidationError('No account found with that email address.')
+
+class ResetPasswordForm(FlaskForm):
+    """Form for resetting password with token."""
+    password = PasswordField('New Password', validators=[DataRequired(), Length(min=6)])
+    confirm_password = PasswordField('Confirm New Password', validators=[DataRequired(), EqualTo('password')])
+    submit = SubmitField('Reset Password')
+
+class ChangePasswordForm(FlaskForm):
+    """Form for changing password when logged in."""
+    current_password = PasswordField('Current Password', validators=[DataRequired()])
+    new_password = PasswordField('New Password', validators=[DataRequired(), Length(min=6)])
+    confirm_new_password = PasswordField('Confirm New Password', validators=[DataRequired(), EqualTo('new_password')])
+    submit = SubmitField('Change Password')
+
 class ComicForm(FlaskForm):
     """Form for adding/editing comic books."""
     title = StringField('Title', validators=[Optional(), Length(max=200)], 

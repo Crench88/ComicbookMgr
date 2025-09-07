@@ -26,6 +26,11 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
+    dark_mode_preference = db.Column(db.Boolean, default=False)  # Dark mode preference
+    
+    # Password reset fields
+    reset_token = db.Column(db.String(100), unique=True, nullable=True)
+    reset_token_expires = db.Column(db.DateTime, nullable=True)
     
     # Relationship to comics
     comics = db.relationship('Comic', backref='owner', lazy=True, cascade='all, delete-orphan')
@@ -37,6 +42,26 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         """Check if the provided password matches the stored hash."""
         return check_password_hash(self.password_hash, password)
+    
+    def generate_reset_token(self):
+        """Generate a password reset token."""
+        import secrets
+        from datetime import datetime, timedelta
+        
+        self.reset_token = secrets.token_urlsafe(32)
+        self.reset_token_expires = datetime.utcnow() + timedelta(hours=1)  # Token expires in 1 hour
+        return self.reset_token
+    
+    def is_reset_token_valid(self, token):
+        """Check if the reset token is valid and not expired."""
+        return (self.reset_token == token and 
+                self.reset_token_expires and 
+                self.reset_token_expires > datetime.utcnow())
+    
+    def clear_reset_token(self):
+        """Clear the reset token after successful password reset."""
+        self.reset_token = None
+        self.reset_token_expires = None
     
     def __repr__(self):
         return f'<User {self.username}>'

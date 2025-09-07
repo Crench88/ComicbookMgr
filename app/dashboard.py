@@ -3,7 +3,7 @@ Dashboard blueprint for Comic Book Collection Manager.
 Handles the main dashboard with statistics and overview.
 """
 
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, redirect, url_for, flash
 from flask_login import login_required, current_user
 from sqlalchemy import func
 from . import db
@@ -65,3 +65,9 @@ def index():
                          top_characters=top_characters,
                          recent_comics=recent_comics,
                          condition_stats=condition_stats)
+
+@dashboard_bp.route('/profile')
+@login_required
+def profile():
+    """User profile and settings page."""
+    return render_template('dashboard/profile.html', title='Profile')

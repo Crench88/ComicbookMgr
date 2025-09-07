@@ -45,6 +45,12 @@
                     </div>
                 </form>
                 
+                <div class="text-center mt-3">
+                    <a href="{{ url_for('auth.forgot_password') }}" class="text-decoration-none">
+                        Forgot your password?
+                    </a>
+                </div>
+                
                 <div class="text-center mt-4">
                     <p class="mb-0">Don't have an account? 
                         <a href="{{ url_for('auth.register') }}" class="text-decoration-none">Register here</a>

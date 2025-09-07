@@ -157,20 +157,88 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Dark mode toggle (if implemented)
-    var darkModeToggle = document.getElementById('darkModeToggle');
-    if (darkModeToggle) {
-        darkModeToggle.addEventListener('click', function() {
-            document.body.classList.toggle('dark-mode');
-            var isDark = document.body.classList.contains('dark-mode');
-            localStorage.setItem('darkMode', isDark);
-        });
+    // Dark mode toggle functionality
+    var darkModeToggleDropdown = document.getElementById('darkModeToggleDropdown');
+    var darkModeToggleNav = document.getElementById('darkModeToggleNav');
+    
+    // Initialize dark mode based on user preference or local storage
+    function initializeDarkMode() {
+        var isDark = false;
         
-        // Check for saved preference
-        var savedDarkMode = localStorage.getItem('darkMode');
-        if (savedDarkMode === 'true') {
-            document.body.classList.add('dark-mode');
+        // Check if user is authenticated and has a preference
+        if (typeof currentUserDarkMode !== 'undefined') {
+            isDark = currentUserDarkMode;
+        } else {
+            // Fall back to local storage
+            var savedDarkMode = localStorage.getItem('darkMode');
+            isDark = savedDarkMode === 'true';
         }
+        
+        if (isDark) {
+            document.body.classList.add('dark-mode');
+            if (darkModeToggleDropdown) darkModeToggleDropdown.checked = true;
+            if (darkModeToggleNav) darkModeToggleNav.checked = true;
+        } else {
+            document.body.classList.remove('dark-mode');
+            if (darkModeToggleDropdown) darkModeToggleDropdown.checked = false;
+            if (darkModeToggleNav) darkModeToggleNav.checked = false;
+        }
+    }
+    
+    // Initialize on page load
+    initializeDarkMode();
+    
+    // Function to handle dark mode toggle
+    function handleDarkModeToggle(isDark) {
+        // Update UI immediately
+        if (isDark) {
+            document.body.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode');
+        }
+        
+        // Sync both toggles
+        if (darkModeToggleDropdown) darkModeToggleDropdown.checked = isDark;
+        if (darkModeToggleNav) darkModeToggleNav.checked = isDark;
+        
+        // Save to local storage as fallback
+        localStorage.setItem('darkMode', isDark);
+        
+        // Send preference to server if user is authenticated
+        if (typeof currentUserAuthenticated !== 'undefined' && currentUserAuthenticated) {
+            fetch('/api/dark-mode', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({
+                    dark_mode: isDark
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    console.error('Failed to save dark mode preference:', data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error saving dark mode preference:', error);
+            });
+        }
+    }
+    
+    // Add event listeners to both toggles
+    if (darkModeToggleDropdown) {
+        darkModeToggleDropdown.addEventListener('change', function() {
+            handleDarkModeToggle(this.checked);
+        });
+    }
+    
+    if (darkModeToggleNav) {
+        darkModeToggleNav.addEventListener('change', function() {
+            handleDarkModeToggle(this.checked);
+        });
     }
 
     // Print functionality

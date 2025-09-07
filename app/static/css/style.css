@@ -4,6 +4,423 @@
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background-color: #f8f9fa;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Dark mode styles */
+body.dark-mode {
+    background-color: #1a1a1a;
+    color: #e0e0e0;
+}
+
+body.dark-mode .navbar-dark {
+    background-color: #2d2d2d !important;
+    border-bottom: 1px solid #404040;
+}
+
+body.dark-mode .navbar-brand,
+body.dark-mode .nav-link {
+    color: #e0e0e0 !important;
+}
+
+body.dark-mode .nav-link:hover {
+    color: #ffffff !important;
+}
+
+body.dark-mode .navbar-toggler {
+    border-color: #404040;
+}
+
+body.dark-mode .navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28224, 224, 224, 0.75%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+body.dark-mode .dropdown-menu {
+    background-color: #2d2d2d;
+    border: 1px solid #404040;
+}
+
+body.dark-mode .dropdown-item {
+    color: #e0e0e0;
+}
+
+body.dark-mode .dropdown-item:hover {
+    background-color: #404040;
+    color: #ffffff;
+}
+
+body.dark-mode .dropdown-divider {
+    border-color: #404040;
+}
+
+body.dark-mode .card {
+    background-color: #2d2d2d;
+    border-color: #404040;
+    color: #e0e0e0;
+}
+
+body.dark-mode .card-header {
+    background-color: #404040;
+    border-bottom-color: #505050;
+    color: #e0e0e0;
+}
+
+body.dark-mode .card-footer {
+    background-color: #404040;
+    border-top-color: #505050;
+}
+
+body.dark-mode .form-control,
+body.dark-mode .form-select {
+    background-color: #404040;
+    border-color: #505050;
+    color: #e0e0e0;
+}
+
+body.dark-mode .form-control:focus,
+body.dark-mode .form-select:focus {
+    background-color: #404040;
+    border-color: #0d6efd;
+    color: #e0e0e0;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+body.dark-mode .form-control::placeholder {
+    color: #a0a0a0;
+}
+
+body.dark-mode .form-check-input {
+    background-color: #404040;
+    border-color: #505050;
+}
+
+body.dark-mode .form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+body.dark-mode .form-check-label {
+    color: #e0e0e0;
+}
+
+body.dark-mode .table {
+    color: #e0e0e0;
+}
+
+body.dark-mode .table-striped > tbody > tr:nth-of-type(odd) {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+body.dark-mode .table-hover > tbody > tr:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+body.dark-mode .table-bordered {
+    border-color: #404040;
+}
+
+body.dark-mode .table-bordered > :not(caption) > * {
+    border-color: #404040;
+}
+
+body.dark-mode .table-light {
+    background-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+
+body.dark-mode .table-light th {
+    background-color: #404040 !important;
+    color: #e0e0e0 !important;
+    border-color: #505050 !important;
+}
+
+body.dark-mode .table tbody tr {
+    background-color: #2d2d2d;
+}
+
+body.dark-mode .table tbody tr:nth-of-type(odd) {
+    background-color: #353535;
+}
+
+body.dark-mode .table tbody tr:hover {
+    background-color: #404040;
+}
+
+body.dark-mode .table td,
+body.dark-mode .table th {
+    border-color: #404040;
+}
+
+body.dark-mode .btn-outline-primary {
+    color: #0d6efd;
+    border-color: #0d6efd;
+    background-color: transparent;
+}
+
+body.dark-mode .btn-outline-primary:hover {
+    color: #ffffff;
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+body.dark-mode .btn-outline-secondary {
+    color: #6c757d;
+    border-color: #6c757d;
+    background-color: transparent;
+}
+
+body.dark-mode .btn-outline-secondary:hover {
+    color: #ffffff;
+    background-color: #6c757d;
+    border-color: #6c757d;
+}
+
+body.dark-mode .btn-outline-danger {
+    color: #dc3545;
+    border-color: #dc3545;
+    background-color: transparent;
+}
+
+body.dark-mode .btn-outline-danger:hover {
+    color: #ffffff;
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+
+body.dark-mode .btn-outline-success {
+    color: #198754;
+    border-color: #198754;
+    background-color: transparent;
+}
+
+body.dark-mode .btn-outline-success:hover {
+    color: #ffffff;
+    background-color: #198754;
+    border-color: #198754;
+}
+
+body.dark-mode .modal-content {
+    background-color: #2d2d2d;
+    border-color: #404040;
+}
+
+body.dark-mode .modal-header {
+    border-bottom-color: #404040;
+}
+
+body.dark-mode .modal-footer {
+    border-top-color: #404040;
+}
+
+body.dark-mode .alert {
+    background-color: #404040;
+    border-color: #505050;
+    color: #e0e0e0;
+}
+
+body.dark-mode .alert-success {
+    background-color: #1e4d2b;
+    border-color: #2d5a3a;
+    color: #d4edda;
+}
+
+body.dark-mode .alert-danger {
+    background-color: #4d1e1e;
+    border-color: #5a2d2d;
+    color: #f8d7da;
+}
+
+body.dark-mode .alert-warning {
+    background-color: #4d3e1e;
+    border-color: #5a4a2d;
+    color: #fff3cd;
+}
+
+body.dark-mode .alert-info {
+    background-color: #1e3a4d;
+    border-color: #2d475a;
+    color: #d1ecf1;
+}
+
+body.dark-mode .list-group-item {
+    background-color: #2d2d2d;
+    border-color: #404040;
+    color: #e0e0e0;
+}
+
+body.dark-mode .list-group-item:hover {
+    background-color: #404040;
+}
+
+body.dark-mode .pagination .page-link {
+    background-color: #2d2d2d;
+    border-color: #404040;
+    color: #e0e0e0;
+}
+
+body.dark-mode .pagination .page-link:hover {
+    background-color: #404040;
+    border-color: #505050;
+    color: #ffffff;
+}
+
+body.dark-mode .pagination .page-item.active .page-link {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+body.dark-mode .pagination .page-item.disabled .page-link {
+    background-color: #2d2d2d;
+    border-color: #404040;
+    color: #6c757d;
+}
+
+body.dark-mode .badge {
+    background-color: #404040;
+    color: #e0e0e0;
+}
+
+body.dark-mode .badge.bg-primary {
+    background-color: #0d6efd !important;
+}
+
+body.dark-mode .badge.bg-success {
+    background-color: #198754 !important;
+}
+
+body.dark-mode .badge.bg-danger {
+    background-color: #dc3545 !important;
+}
+
+body.dark-mode .badge.bg-warning {
+    background-color: #ffc107 !important;
+    color: #000 !important;
+}
+
+body.dark-mode .badge.bg-info {
+    background-color: #0dcaf0 !important;
+    color: #000 !important;
+}
+
+body.dark-mode .badge.bg-secondary {
+    background-color: #6c757d !important;
+}
+
+body.dark-mode .badge.bg-light {
+    background-color: #e9ecef !important;
+    color: #000 !important;
+}
+
+body.dark-mode .text-muted {
+    color: #a0a0a0 !important;
+}
+
+body.dark-mode .text-secondary {
+    color: #adb5bd !important;
+}
+
+body.dark-mode .border {
+    border-color: #404040 !important;
+}
+
+body.dark-mode .border-top {
+    border-top-color: #404040 !important;
+}
+
+body.dark-mode .border-bottom {
+    border-bottom-color: #404040 !important;
+}
+
+body.dark-mode .border-start {
+    border-left-color: #404040 !important;
+}
+
+body.dark-mode .border-end {
+    border-right-color: #404040 !important;
+}
+
+body.dark-mode footer {
+    background: linear-gradient(135deg, #2d2d2d 0%, #404040 100%) !important;
+    color: #e0e0e0;
+}
+
+body.dark-mode footer a {
+    color: #e0e0e0;
+}
+
+body.dark-mode footer a:hover {
+    color: #ffffff;
+}
+
+/* Additional dark mode styles for comics page */
+body.dark-mode .bg-light {
+    background-color: #404040 !important;
+}
+
+body.dark-mode .img-thumbnail {
+    border-color: #404040;
+}
+
+body.dark-mode .btn-group .btn {
+    border-color: #404040;
+}
+
+body.dark-mode .btn-group .btn:hover {
+    border-color: #505050;
+}
+
+/* Dark mode toggle switch styles */
+.dark-mode-toggle {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.dark-mode-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.dark-mode-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.dark-mode-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+input:checked + .dark-mode-slider {
+    background-color: #0d6efd;
+}
+
+input:checked + .dark-mode-slider:before {
+    transform: translateX(26px);
+}
+
+body.dark-mode .dark-mode-slider {
+    background-color: #404040;
+}
+
+body.dark-mode input:checked + .dark-mode-slider {
+    background-color: #0d6efd;
 }
 
 /* Card hover effects */
@@ -14,6 +431,10 @@ body {
 .card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+body.dark-mode .card:hover {
+    box-shadow: 0 4px 8px rgba(255,255,255,0.1);
 }
 
 /* Comic cover image styles */
@@ -44,6 +465,10 @@ body {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
+body.dark-mode .stats-card {
+    box-shadow: 0 2px 4px rgba(255,255,255,0.1);
+}
+
 .stats-card .card-body {
     padding: 1.5rem;
 }
@@ -54,6 +479,11 @@ body {
     border-radius: 10px;
     padding: 2rem;
     color: white;
+}
+
+body.dark-mode .search-form {
+    background: linear-gradient(135deg, #2d2d2d 0%, #404040 100%);
+    color: #e0e0e0;
 }
 
 /* Comic grid responsive adjustments */
@@ -121,23 +551,6 @@ footer {
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
 }
 
-/* Dark mode support (optional enhancement) */
-@media (prefers-color-scheme: dark) {
-    body {
-        background-color: #212529;
-        color: #f8f9fa;
-    }
-    
-    .card {
-        background-color: #343a40;
-        border-color: #495057;
-    }
-    
-    .navbar-dark {
-        background-color: #212529 !important;
-    }
-}
-
 /* Animation for page transitions */
 .fade-in {
     animation: fadeIn 0.5s ease-in;
@@ -170,6 +583,18 @@ footer {
 
 ::-webkit-scrollbar-thumb:hover {
     background: #555;
+}
+
+body.dark-mode ::-webkit-scrollbar-track {
+    background: #2d2d2d;
+}
+
+body.dark-mode ::-webkit-scrollbar-thumb {
+    background: #555;
+}
+
+body.dark-mode ::-webkit-scrollbar-thumb:hover {
+    background: #777;
 }
 
 /* Responsive text sizing */
