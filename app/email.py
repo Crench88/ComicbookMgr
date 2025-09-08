@@ -16,6 +16,16 @@ def send_password_reset_email(user, token):
         token: Password reset token
     """
     try:
+        # Check if email is properly configured
+        if not current_app.config.get('MAIL_USERNAME') or current_app.config.get('MAIL_USERNAME') == 'your-email@gmail.com':
+            # Email not configured, just log the reset link
+            reset_url = f"http://localhost:5000/reset-password/{token}"
+            current_app.logger.info(f'Password reset for {user.email}: {reset_url}')
+            print(f"\n🔐 PASSWORD RESET LINK FOR {user.email}:")
+            print(f"   {reset_url}")
+            print(f"   (This link will expire in 1 hour)")
+            return True
+        
         msg = Message(
             subject='Reset Your Password - Comic Book Collection Manager',
             recipients=[user.email],
@@ -38,6 +48,13 @@ def send_password_changed_email(user):
         user: User object
     """
     try:
+        # Check if email is properly configured
+        if not current_app.config.get('MAIL_USERNAME') or current_app.config.get('MAIL_USERNAME') == 'your-email@gmail.com':
+            # Email not configured, just log the confirmation
+            current_app.logger.info(f'Password changed for {user.email}')
+            print(f"\n✅ Password changed successfully for {user.email}")
+            return True
+        
         msg = Message(
             subject='Password Changed - Comic Book Collection Manager',
             recipients=[user.email],

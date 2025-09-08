@@ -157,6 +157,12 @@ check_*.py
 create_*.py
 setup_*.py
 
+# Deployment files (keep templates, ignore actual configs)
+.env
+.env.local
+.env.staging
+wsgi.py
+
 # Uploaded files
 static/uploads/
 instance/uploads/
