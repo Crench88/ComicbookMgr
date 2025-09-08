@@ -101,7 +101,7 @@ def main():
         print("   source venv/bin/activate")
     print("2. Update the SECRET_KEY in .env file")
     print("3. Run the application:")
-    print("   python run.py")
+    print("   python app.py")
     print("4. Open http://localhost:5000 in your browser")
     print("\nHappy collecting! 🦸‍♂️📚")
 

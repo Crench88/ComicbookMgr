@@ -88,13 +88,13 @@ A comprehensive web application for managing personal comic book collections, bu
 
 5. **Initialize the database**
    ```bash
-   python run.py
+   python app.py
    ```
    The database will be automatically created on first run.
 
 6. **Run the application**
    ```bash
-   python run.py
+   python app.py
    ```
 
 7. **Access the application**
@@ -134,7 +134,7 @@ ComicbookMgr/
 ├── main.py                # Main routes blueprint
 ├── dashboard.py           # Dashboard blueprint
 ├── comics.py              # Comics management blueprint
-├── run.py                 # Application entry point
+├── app.py                 # Application entry point
 ├── requirements.txt       # Python dependencies
 ├── README.md             # This file
 ├── templates/            # HTML templates

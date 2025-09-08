@@ -94,7 +94,7 @@ app.run(debug=True, host='0.0.0.0', port=443)
 
 3. **Run Flask:**
    ```bash
-   python run.py
+   python app.py
    ```
 
 ## 🌐 **Marvel API Whitelisting**

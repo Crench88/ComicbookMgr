@@ -8,5 +8,5 @@ echo Starting application...
 echo Open your browser and go to: http://localhost:5000
 echo Press Ctrl+C to stop the application
 echo.
-python run.py
+python app.py
 pause

@@ -112,7 +112,7 @@ The system includes professional email templates:
 1. **Test Forgot Password:**
    ```bash
    # Start your application
-   python run.py
+   python app.py
    
    # Navigate to login page
    # Click "Forgot your password?"

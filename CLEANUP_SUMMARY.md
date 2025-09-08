@@ -50,7 +50,7 @@ Your Comic Book Collection Manager project has been cleaned up and organized. He
 
 #### **Core Application:**
 - `app/` - Main application package
-- `run.py` - Development server
+- `app.py` - Development server
 - `run_production.py` - Production server
 - `setup.py` - Project setup script
 
@@ -113,7 +113,7 @@ ComicbookMgr/
 ├── tests/                  # Test framework
 ├── instance/               # Database and uploads
 ├── Covers/                 # Sample images
-├── run.py                  # Development server
+├── app.py                  # Development server
 ├── run_production.py       # Production server
 ├── setup.py               # Setup script
 ├── requirements.txt       # Dependencies
