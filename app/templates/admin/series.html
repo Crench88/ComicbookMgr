@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Series List{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h1 class="h3 mb-0"><i class="bi bi-collection"></i> Comic Series Admin</h1>
+                <p class="text-muted mb-0">Maintain the canonical series and volume list used throughout the app.</p>
+            </div>
+            <a href="{{ url_for('comics.new') }}" class="btn btn-outline-primary">
+                <i class="bi bi-plus-circle"></i> Add Comic
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-4">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-journal-plus"></i> Add Series</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control" + (" is-invalid" if form.name.errors else "")) }}
+                        {% if form.name.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.name.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.volume.label(class="form-label") }}
+                        {{ form.volume(class="form-control" + (" is-invalid" if form.volume.errors else "")) }}
+                        {% if form.volume.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.volume.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                        <div class="form-text">Save numeric volume number (e.g., 1, 2, 2015).</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.publisher.label(class="form-label") }}
+                        {{ form.publisher(class="form-control" + (" is-invalid" if form.publisher.errors else "")) }}
+                        {% if form.publisher.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.publisher.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.date_range.label(class="form-label") }}
+                        {{ form.date_range(class="form-control" + (" is-invalid" if form.date_range.errors else "")) }}
+                        {% if form.date_range.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.date_range.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                        <div class="form-text">Optional range (e.g., "March 1963 – September 1996").</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.notes.label(class="form-label") }}
+                        {{ form.notes(class="form-control" + (" is-invalid" if form.notes.errors else ""), rows=3) }}
+                        {% if form.notes.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in form.notes.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="d-grid">
+                        {{ form.submit(class="btn btn-primary") }}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-card-list"></i> Saved Series</h5>
+                <span class="badge bg-secondary">{{ series_list|length }} total</span>
+            </div>
+            <div class="card-body p-0">
+                {% if series_list %}
+                <div class="table-responsive">
+                    <table class="table table-striped mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Series</th>
+                                <th>Publisher</th>
+                                <th>Date Range</th>
+                                <th>Notes</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for series in series_list %}
+                            <tr>
+                                <td>
+                                    <strong>{{ series.display_name }}</strong>
+                                </td>
+                                <td>{{ series.publisher or '—' }}</td>
+                                <td>{{ series.date_range or '—' }}</td>
+                                <td class="text-muted small">{{ series.notes or '' }}</td>
+                                <td class="text-end">
+                                    <div class="d-inline-flex align-items-center gap-1">
+                                        <a href="{{ url_for('admin.edit_series', series_id=series.id) }}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <form method="POST" action="{{ url_for('admin.delete_series', series_id=series.id) }}" class="d-inline m-0 p-0">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete" onclick="return confirm('Remove {{ series.display_name }} from the list?');">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="p-4 text-center text-muted">
+                    <i class="bi bi-journals display-4 d-block mb-2"></i>
+                    <p class="mb-0">No series saved yet. Add your first series using the form on the left.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

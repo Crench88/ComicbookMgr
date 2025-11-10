@@ -41,6 +41,15 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('comics.wishlist') }}">Wishlist</a>
                     </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="comicAdminMenu" role="button" data-bs-toggle="dropdown">
+                            Comic Admin
+                        </a>
+                        <ul class="dropdown-menu" aria-labelledby="comicAdminMenu">
+                            <li><a class="dropdown-item" href="{{ url_for('admin.series_index') }}">Series List</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('admin.series_issues') }}">Series Issues</a></li>
+                        </ul>
+                    </li>
                     {% endif %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('main.about') }}">About</a>

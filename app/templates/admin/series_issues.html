@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{% block title %}Series Issue Manager{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <h1 class="h3 mb-0"><i class="bi bi-journals"></i> Series Issue Manager</h1>
+        <p class="text-muted mb-0">Add single issues or bulk upload CSV metadata for your canonical series list.</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-4">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-plus-circle"></i> Add Single Issue</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ issue_form.hidden_tag() }}
+                    <input type="hidden" name="form_type" value="single">
+                    <div class="mb-3">
+                        {{ issue_form.series_id.label(class="form-label") }}
+                        {{ issue_form.series_id(class="form-select" + (" is-invalid" if issue_form.series_id.errors else "")) }}
+                        {% if issue_form.series_id.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.series_id.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ issue_form.issue_number.label(class="form-label") }}
+                        {{ issue_form.issue_number(class="form-control" + (" is-invalid" if issue_form.issue_number.errors else "")) }}
+                        {% if issue_form.issue_number.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.issue_number.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ issue_form.title.label(class="form-label") }}
+                        {{ issue_form.title(class="form-control" + (" is-invalid" if issue_form.title.errors else "")) }}
+                        {% if issue_form.title.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.title.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ issue_form.cover_date.label(class="form-label") }}
+                        {{ issue_form.cover_date(class="form-control" + (" is-invalid" if issue_form.cover_date.errors else "")) }}
+                        {% if issue_form.cover_date.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.cover_date.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ issue_form.featured_characters.label(class="form-label") }}
+                        {{ issue_form.featured_characters(class="form-control" + (" is-invalid" if issue_form.featured_characters.errors else ""), rows=2) }}
+                        {% if issue_form.featured_characters.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.featured_characters.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ issue_form.writer.label(class="form-label") }}
+                        {{ issue_form.writer(class="form-control" + (" is-invalid" if issue_form.writer.errors else "")) }}
+                        {% if issue_form.writer.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.writer.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ issue_form.artist.label(class="form-label") }}
+                        {{ issue_form.artist(class="form-control" + (" is-invalid" if issue_form.artist.errors else "")) }}
+                        {% if issue_form.artist.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.artist.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ issue_form.story_arc.label(class="form-label") }}
+                        {{ issue_form.story_arc(class="form-control" + (" is-invalid" if issue_form.story_arc.errors else "")) }}
+                        {% if issue_form.story_arc.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in issue_form.story_arc.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="d-grid">
+                        {{ issue_form.submit_add(class="btn btn-primary") }}
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header bg-secondary text-white">
+                <h5 class="mb-0"><i class="bi bi-file-earmark-arrow-up"></i> Bulk Upload CSV</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" enctype="multipart/form-data">
+                    {{ upload_form.hidden_tag() }}
+                    <input type="hidden" name="form_type" value="csv">
+                    <div class="mb-3">
+                        {{ upload_form.series_id.label(class="form-label") }}
+                        {{ upload_form.series_id(class="form-select" + (" is-invalid" if upload_form.series_id.errors else "")) }}
+                        {% if upload_form.series_id.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in upload_form.series_id.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        {{ upload_form.file.label(class="form-label") }}
+                        {{ upload_form.file(class="form-control" + (" is-invalid" if upload_form.file.errors else "")) }}
+                        {% if upload_form.file.errors %}
+                        <div class="invalid-feedback">
+                            {% for error in upload_form.file.errors %}{{ error }}{% endfor %}
+                        </div>
+                        {% endif %}
+                        <div class="form-text">
+                            CSV headers must be exactly:
+                            <code>Issue Number, Title, Cover Date, Featured Characters, Writer, Artist, Story Arc</code>
+                        </div>
+                    </div>
+                    <div class="d-grid">
+                        {{ upload_form.submit_upload(class="btn btn-secondary") }}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="card mb-3">
+            <div class="card-body">
+                <form method="GET" class="row g-2 align-items-end">
+                    <div class="col-md-8">
+                        <label for="seriesFilter" class="form-label">Choose Series</label>
+                        <select id="seriesFilter" name="series_id" class="form-select">
+                            <option value="">-- Select Series --</option>
+                            {% for series in series_list %}
+                            <option value="{{ series.id }}" {% if series.id == selected_series_id %}selected{% endif %}>
+                                {{ series.display_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-search"></i> Load Issues</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-card-list"></i> Series Issues</h5>
+                {% if issues %}
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-secondary">{{ issues|length }} issue{{ 's' if issues|length != 1 else '' }}</span>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="addSelectedTopBtn" disabled>
+                        <i class="bi bi-plus-circle"></i> Add Selected to My Comics
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+            <div class="card-body p-0">
+                {% if issues %}
+                <form method="POST" id="issuesTableForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="action" value="add_selected">
+                    <input type="hidden" name="series_id" value="{{ selected_series_id or '' }}">
+                    <div class="table-responsive">
+                        <table class="table table-striped mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 40px;">
+                                        <input type="checkbox" id="selectAllIssues" class="form-check-input">
+                                    </th>
+                                    <th>Issue Number</th>
+                                    <th>Title</th>
+                                    <th>Cover Date</th>
+                                    <th>Featured Characters</th>
+                                    <th>Writer</th>
+                                    <th>Artist</th>
+                                    <th>Story Arc</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for issue in issues %}
+                                <tr>
+                                    <td>
+                                        <input type="checkbox" class="form-check-input issue-checkbox" name="selected_issues" value="{{ issue.id }}">
+                                    </td>
+                                    <td>{{ issue.issue_number }}</td>
+                                    <td>{{ issue.title or '—' }}</td>
+                                    <td>{{ issue.cover_date or '—' }}</td>
+                                    <td class="text-muted small">{{ issue.featured_characters or '' }}</td>
+                                    <td>{{ issue.writer or '—' }}</td>
+                                    <td>{{ issue.artist or '—' }}</td>
+                                    <td>{{ issue.story_arc or '—' }}</td>
+                                    <td class="text-end">
+                                        <form method="POST" action="{{ url_for('admin.delete_series_issue', issue_id=issue.id) }}" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete Issue" onclick="return confirm('Remove issue {{ issue.issue_number }}?');">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="p-3 border-top">
+                        <button type="submit" class="btn btn-primary" id="addSelectedBottomBtn" disabled>
+                            <i class="bi bi-plus-circle"></i> Add Selected to My Comics
+                        </button>
+                    </div>
+                </form>
+                {% else %}
+                <div class="p-4 text-center text-muted">
+                    <i class="bi bi-info-circle display-5 d-block mb-2"></i>
+                    <p class="mb-0">Select a series to view or add canonical issue data.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('issuesTableForm');
+    const selectAll = document.getElementById('selectAllIssues');
+    const checkboxes = document.querySelectorAll('.issue-checkbox');
+    const topBtn = document.getElementById('addSelectedTopBtn');
+    const bottomBtn = document.getElementById('addSelectedBottomBtn');
+
+    function updateButtons() {
+        const anyChecked = Array.from(checkboxes).some(cb => cb.checked);
+        if (topBtn) topBtn.disabled = !anyChecked;
+        if (bottomBtn) bottomBtn.disabled = !anyChecked;
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', () => {
+            checkboxes.forEach(cb => cb.checked = selectAll.checked);
+            updateButtons();
+        });
+    }
+
+    checkboxes.forEach(cb => cb.addEventListener('change', updateButtons));
+
+    if (topBtn && form) {
+        topBtn.addEventListener('click', () => form.submit());
+    }
+
+    updateButtons();
+});
+</script>
+{% endblock %}
+

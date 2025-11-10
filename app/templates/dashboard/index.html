@@ -2,6 +2,47 @@
 
 {% block title %}Dashboard{% endblock %}
 
+{% block extra_css %}
+<style>
+    .comic-cover-container {
+        position: relative;
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #f8f9fa;
+        z-index: 1;
+    }
+    
+    .comic-cover {
+        transition: transform 0.3s ease;
+        height: 200px;
+        object-fit: contain;
+        cursor: pointer;
+        position: relative;
+        z-index: 2;
+    }
+    
+    .comic-cover-container:hover {
+        overflow: visible;
+        z-index: 10;
+    }
+    
+    .comic-cover-container:hover .comic-cover {
+        transform: scale(3);
+    }
+    
+    .card {
+        position: relative;
+        z-index: 1;
+    }
+    
+    .card:hover {
+        z-index: 10;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <!-- Dashboard Header -->
 <div class="row mb-4">
@@ -148,8 +189,10 @@
                         <div class="col-md-6 col-lg-4 mb-3">
                             <div class="card h-100">
                                 {% if comic.has_cover_image() %}
-                                <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
-                                     class="card-img-top" alt="{{ comic.title }}" style="height: 200px; object-fit: contain;">
+                                <div class="card-img-top comic-cover-container">
+                                    <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
+                                         class="comic-cover" alt="{{ comic.title }}">
+                                </div>
                                 {% else %}
                                 <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 
                                      style="height: 200px;">

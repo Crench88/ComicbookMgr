@@ -3,6 +3,7 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
+{% set series_options = series_options if series_options is defined else [] %}
 <div class="row justify-content-center">
     <div class="col-lg-8">
         <div class="card shadow">
@@ -52,60 +53,38 @@
                                         </label>
                                     </div>
                                     <div class="form-check form-check-inline">
-                                        <input class="form-check-input" type="checkbox" id="searchMarvel">
-                                        <label class="form-check-label" for="searchMarvel">
-                                            <i class="bi bi-lightning"></i> Marvel
-                                            <span class="badge bg-warning ms-1" id="marvelStatus">⚠</span>
-                                        </label>
-                                    </div>
-                                    <div class="form-check form-check-inline">
-                                        <input class="form-check-input" type="checkbox" id="searchGCD">
-                                        <label class="form-check-label" for="searchGCD">
-                                            <i class="bi bi-upc-scan"></i> Open Library (ISBN)
-                                            <span class="badge bg-info ms-1" id="gcdStatus">📊</span>
-                                        </label>
-                                    </div>
-                                    <div class="form-check form-check-inline">
-                                        <input class="form-check-input" type="checkbox" id="searchUPCDatabase">
-                                        <label class="form-check-label" for="searchUPCDatabase">
-                                            <i class="bi bi-upc"></i> UPC Database
-                                            <span class="badge bg-primary ms-1" id="upcDatabaseStatus">🔍</span>
-                                        </label>
-                                    </div>
-                                    <div class="form-check form-check-inline">
-                                        <input class="form-check-input" type="checkbox" id="searchBarcodeLookup">
-                                        <label class="form-check-label" for="searchBarcodeLookup">
-                                            <i class="bi bi-barcode"></i> Barcode Lookup
-                                            <span class="badge bg-secondary ms-1" id="barcodeLookupStatus">🔍</span>
-                                        </label>
-                                    </div>
-
-                                    <div class="form-check form-check-inline">
                                         <input class="form-check-input" type="checkbox" id="searchLocal" checked>
                                         <label class="form-check-label" for="searchLocal">
                                             <i class="bi bi-database"></i> Local Database
                                             <span class="badge bg-success ms-1" id="localStatus">✓</span>
                                         </label>
                                     </div>
-                                    <div class="form-check form-check-inline">
-                                        <input class="form-check-input" type="checkbox" id="searchAI">
-                                        <label class="form-check-label" for="searchAI">
-                                            <i class="bi bi-robot"></i> AI Metadata Assistant
-                                            <span class="badge bg-info ms-1" id="aiStatus">🤖</span>
-                                        </label>
-                                    </div>
-                                    <div class="form-check form-check-inline">
-                                        <input class="form-check-input" type="checkbox" id="searchSmart">
-                                        <label class="form-check-label" for="searchSmart">
-                                            <i class="bi bi-lightbulb"></i> Smart Search (AI Enhanced)
-                                            <span class="badge bg-success ms-1" id="smartStatus">💡</span>
-                                        </label>
-                                    </div>
                                 </div>
                                                                                          <div class="small text-muted">
                             <i class="bi bi-info-circle"></i> 
-                            <span id="statusInfo">ComicVine and Local Database are working. Marvel API may need domain whitelisting. Open Library provides ISBN codes. UPC Database and Barcode Lookup provide UPC code searches. Local Database can search by UPC and ISBN numbers. AI Metadata Assistant provides enhanced search with structured metadata extraction. <strong>You can now search with dates like "Amazing Spider-Man #1 December 2015"!</strong></span>
+                            <span id="statusInfo">ComicVine pulls live data. Local Database searches the Series Catalog you maintain under Comic Admin. Select both to combine live data with your curated series issues.</span>
                         </div>
+                            </div>
+                        </div>
+
+                        <!-- Local database filters -->
+                        <div id="localFilters" class="row g-3 mt-1">
+                            <div class="col-md-8">
+                                <label for="localSeriesInput" class="form-label">Series (Series Catalog)</label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="localSeriesInput"
+                                       placeholder="Start typing to filter series..."
+                                       list="seriesOptions">
+                                <div class="form-text">Filters local results to one of your saved series.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="localIssueInput" class="form-label">Issue Number</label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="localIssueInput"
+                                       placeholder="e.g., 1 or 001">
+                                <div class="form-text">Optional issue filter for the selected series.</div>
                             </div>
                         </div>
                         
@@ -134,7 +113,7 @@
                         <div class="col-md-8">
                             <div class="mb-3">
                                 {{ form.series.label(class="form-label") }}
-                                {{ form.series(class="form-control" + (" is-invalid" if form.series.errors else ""), placeholder="e.g., The Amazing Spider-Man", id="comicSeries") }}
+                                {{ form.series(class="form-control" + (" is-invalid" if form.series.errors else ""), placeholder="e.g., The Amazing Spider-Man", id="comicSeries", list="seriesOptions") }}
                                 {% if form.series.errors %}
                                     <div class="invalid-feedback">
                                         {% for error in form.series.errors %}
@@ -142,7 +121,10 @@
                                         {% endfor %}
                                     </div>
                                 {% endif %}
-                                <div class="form-text">Series name (e.g., "The Amazing Spider-Man")</div>
+                                <div class="form-text">
+                                    Series name (e.g., "The Amazing Spider-Man"). Start typing to select from your Series List.
+                                    <a href="{{ url_for('admin.series_index') }}" class="ms-1">Manage Series</a>
+                                </div>
                             </div>
                         </div>
                         <div class="col-md-4">
@@ -318,6 +300,10 @@
                             </div>
                         {% endif %}
                         <div class="form-text">Upload a cover image (JPG, PNG, GIF - max 16MB)</div>
+                        <button type="button" class="btn btn-outline-primary mt-2" id="fetchCoverBtn">
+                            <i class="bi bi-image"></i> Find Cover via ComicVine
+                        </button>
+                        <div id="coverSearchStatus" class="d-none mt-2"></div>
                         
                         {% if comic and comic.has_cover_image() %}
                         <div class="mt-2">
@@ -369,6 +355,15 @@
     </div>
 </div>
 
+{% if series_options %}
+<datalist id="seriesOptions">
+    {% for series in series_options %}
+    <option value="{{ series.display_name }}"
+            {% if series.publisher or series.date_range %}label="{{ series.publisher or '' }}{% if series.publisher and series.date_range %} • {% endif %}{{ series.date_range or '' }}"{% endif %}></option>
+    {% endfor %}
+</datalist>
+{% endif %}
+
 <!-- Comic Search JavaScript -->
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -380,6 +375,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const resultsList = document.getElementById('resultsList');
     const searchLoading = document.getElementById('searchLoading');
     const searchError = document.getElementById('searchError');
+    const searchLocalToggle = document.getElementById('searchLocal');
+    const localFilters = document.getElementById('localFilters');
+    const localSeriesInput = document.getElementById('localSeriesInput');
+    const localIssueInput = document.getElementById('localIssueInput');
+    const fetchCoverBtn = document.getElementById('fetchCoverBtn');
+    const coverSearchStatus = document.getElementById('coverSearchStatus');
     
     console.log('Search elements found:', {
         searchBtn: !!searchBtn,
@@ -401,27 +402,107 @@ document.addEventListener('DOMContentLoaded', function() {
     const isbnField = document.getElementById('comicISBN');
     const releaseDateField = document.getElementById('comicReleaseDate');
     
+    function toggleLocalFilters() {
+        if (!localFilters) return;
+        if (searchLocalToggle.checked) {
+            localFilters.classList.remove('d-none');
+        } else {
+            localFilters.classList.add('d-none');
+            if (localSeriesInput) localSeriesInput.value = '';
+            if (localIssueInput) localIssueInput.value = '';
+        }
+    }
+
+    if (searchLocalToggle && localFilters) {
+        toggleLocalFilters();
+        searchLocalToggle.addEventListener('change', toggleLocalFilters);
+    }
+
+    function setCoverStatus(message, type = 'info') {
+        if (!coverSearchStatus) return;
+        coverSearchStatus.className = `alert alert-${type} mt-2`;
+        coverSearchStatus.textContent = message;
+        coverSearchStatus.classList.remove('d-none');
+    }
+
+    function clearCoverStatus() {
+        if (coverSearchStatus) {
+            coverSearchStatus.classList.add('d-none');
+        }
+    }
+
+    if (fetchCoverBtn) {
+        fetchCoverBtn.addEventListener('click', () => {
+            const seriesValue = seriesField.value.trim();
+            const issueValue = issueField.value.trim();
+            const titleValue = titleField.value.trim();
+
+            if (!seriesValue && !issueValue && !titleValue) {
+                setCoverStatus('Enter at least series, issue, or title before looking for covers.', 'warning');
+                return;
+            }
+
+            setCoverStatus('Searching ComicVine for cover images...', 'info');
+
+            const params = new URLSearchParams({
+                q: '',
+                comicvine: '1',
+                local: '0',
+                series_name: seriesValue,
+                issue_number: issueValue,
+                title: titleValue
+            });
+
+            fetch(`/comics/search-api?${params.toString()}`)
+                .then(resp => resp.json())
+                .then(data => {
+                    if (data.error) {
+                        setCoverStatus(data.error, 'danger');
+                        return;
+                    }
+                    const results = data.results || [];
+                    let coverResult = results.find(r => r.cover_images && r.cover_images.length) ||
+                                      results.find(r => r.cover_image_url);
+
+                    if (!coverResult) {
+                        setCoverStatus('No cover images returned from ComicVine for this entry.', 'warning');
+                        return;
+                    }
+
+                    clearCoverStatus();
+
+                    if (coverResult.cover_images && coverResult.cover_images.length) {
+                        showCoverSelectionModal(coverResult.cover_images, coverResult.title || seriesValue || 'Selected Comic');
+                    } else if (coverResult.cover_image_url) {
+                        fetchCoverImage(coverResult.cover_image_url);
+                        setCoverStatus('Primary cover image fetched and applied.', 'success');
+                        setTimeout(clearCoverStatus, 4000);
+                    }
+                })
+                .catch(err => {
+                    console.error('Cover search failed:', err);
+                    setCoverStatus(`Cover search failed: ${err.message}`, 'danger');
+                });
+        });
+    }
+
     searchBtn.addEventListener('click', function() {
         console.log('Search button clicked');
         const query = searchQuery.value.trim();
-        console.log('Search query:', query);
-        if (!query) {
-            showError('Please enter a search term');
+        const seriesValue = localSeriesInput ? localSeriesInput.value.trim() : '';
+        const issueValue = localIssueInput ? localIssueInput.value.trim() : '';
+        console.log('Search query:', query, 'Series:', seriesValue, 'Issue:', issueValue);
+        if (!query && !seriesValue && !issueValue) {
+            showError('Enter a search term or select a series/issue.');
             return;
         }
         
         // Get selected search sources
         const searchComicVine = document.getElementById('searchComicVine').checked;
-        const searchMarvel = document.getElementById('searchMarvel').checked;
-        const searchGCD = document.getElementById('searchGCD').checked;
-        const searchUPCDatabase = document.getElementById('searchUPCDatabase').checked;
-        const searchBarcodeLookup = document.getElementById('searchBarcodeLookup').checked;
-        const searchAI = document.getElementById('searchAI').checked;
-        const searchSmart = document.getElementById('searchSmart').checked;
         const searchLocal = document.getElementById('searchLocal').checked;
         
         // Check if at least one source is selected
-        if (!searchComicVine && !searchMarvel && !searchGCD && !searchUPCDatabase && !searchBarcodeLookup && !searchAI && !searchSmart && !searchLocal) {
+        if (!searchComicVine && !searchLocal) {
             showError('Please select at least one search source');
             return;
         }
@@ -435,31 +516,21 @@ document.addEventListener('DOMContentLoaded', function() {
         const loadingText = searchLoading.querySelector('p');
         const sources = [];
         if (searchComicVine) sources.push('ComicVine');
-        if (searchMarvel) sources.push('Marvel');
-        if (searchGCD) sources.push('Open Library (ISBN)');
-        if (searchUPCDatabase) sources.push('UPC Database');
-        if (searchBarcodeLookup) sources.push('Barcode Lookup');
-        if (searchAI) sources.push('AI Metadata Assistant');
-        if (searchSmart) sources.push('Smart Search (AI Enhanced)');
-        if (searchLocal) sources.push('Local Database');
+        if (searchLocal) sources.push('Series Catalog');
         loadingText.textContent = `Searching ${sources.join(', ')}...`;
         
         // Build search parameters
         const params = new URLSearchParams({
             q: query,
             comicvine: searchComicVine ? '1' : '0',
-            marvel: searchMarvel ? '1' : '0',
-            gcd: searchGCD ? '1' : '0',
-            upc_database: searchUPCDatabase ? '1' : '0',
-            barcode_lookup: searchBarcodeLookup ? '1' : '0',
-            ai_search: searchAI ? '1' : '0',
-            smart_search: searchSmart ? '1' : '0',
-            local: searchLocal ? '1' : '0'
+            local: searchLocal ? '1' : '0',
+            series_name: seriesValue,
+            issue_number: issueValue
         });
         
         // Make API request
         console.log('Searching for:', query);
-        console.log('Search sources:', { comicvine: searchComicVine, marvel: searchMarvel, gcd: searchGCD, upc_database: searchUPCDatabase, barcode_lookup: searchBarcodeLookup, ai_search: searchAI, smart_search: searchSmart, local: searchLocal });
+        console.log('Search sources:', { comicvine: searchComicVine, local: searchLocal });
         fetch(`/comics/search-api?${params.toString()}`)
             .then(response => {
                 console.log('Response status:', response.status);
@@ -504,6 +575,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const issue = comic.issue_number || 'Unknown Issue';
             const publisher = comic.publisher || 'Unknown Publisher';
             const volume = comic.volume || '';
+            const issueHeader = `#${issue} ${title}`;
+            
+            const variantNote = comic.variant_cover_name ? `<span class="badge bg-warning text-dark ms-2">${comic.variant_cover_name}</span>` : '';
+            const conditionNote = comic.condition ? `<span class="badge bg-info ms-2">${comic.condition}</span>` : '';
             
             resultItem.innerHTML = `
                 <div class="d-flex justify-content-between align-items-start">
@@ -514,14 +589,17 @@ document.addEventListener('DOMContentLoaded', function() {
                             </div>
                         ` : ''}
                         <div class="flex-grow-1">
-                            <h6 class="mb-1">${title} #${issue}</h6>
+                            <h6 class="mb-1">
+                                ${issueHeader}
+                                ${variantNote}
+                                ${conditionNote}
+                            </h6>
                             <p class="mb-1 text-muted">${publisher}${volume ? ' - ' + volume : ''}</p>
                             ${comic.volume ? `<small class="text-warning"><i class="bi bi-book"></i> <strong>${comic.volume}</strong></small><br>` : ''}
                             ${comic.release_date ? `<small class="text-primary"><i class="bi bi-calendar"></i> <strong>Release: ${formatDate(comic.release_date)}</strong></small><br>` : ''}
                             ${comic.characters ? `<small class="text-muted">Characters: ${comic.characters}</small><br>` : ''}
                             ${comic.writers && comic.writers.length > 0 ? `<small class="text-muted">Writers: ${comic.writers.join(', ')}</small><br>` : ''}
                             ${comic.artists && comic.artists.length > 0 ? `<small class="text-muted">Artists: ${comic.artists.join(', ')}</small><br>` : ''}
-                            ${comic.variant_cover_name ? `<small class="text-warning"><i class="bi bi-image"></i> Variant: ${comic.variant_cover_name}</small><br>` : ''}
                             ${comic.upc ? `<small class="text-info"><i class="bi bi-upc-scan"></i> UPC: ${comic.upc}</small><br>` : ''}
                             ${comic.isbn ? `<small class="text-info"><i class="bi bi-book"></i> ISBN: ${comic.isbn}</small><br>` : ''}
                             ${comic.source ? `<small class="text-secondary">Source: ${comic.source}${comic.ai_enhanced ? ' <i class="bi bi-robot text-info"></i>' : ''}${comic.needs_details ? ' <span class="badge bg-warning">Needs Details</span>' : ''}</small>` : ''}
@@ -757,7 +835,13 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Fill form fields
         titleField.value = comic.title || '';  // Individual issue title (e.g., "Worldwide")
-        seriesField.value = comic.series || '';  // Series name (e.g., "The Amazing Spider-Man")
+        seriesField.value = comic.series || comic.volume || '';  // Series name (e.g., "The Amazing Spider-Man")
+        if (localSeriesInput) {
+            localSeriesInput.value = comic.series || comic.volume || '';
+        }
+        if (localIssueInput) {
+            localIssueInput.value = comic.issue_number || '';
+        }
         issueField.value = comic.issue_number || '';
         publisherField.value = comic.publisher || '';
         genreField.value = comic.genre || '';
@@ -856,6 +940,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Populate cover options
         const coverOptions = document.getElementById('coverOptions');
         coverOptions.innerHTML = '';
+        modal.querySelector('.modal-title').textContent = `Select Cover Image for "${comicTitle}"`;
         
         coverImages.forEach((cover, index) => {
             const coverCard = document.createElement('div');

@@ -105,6 +105,18 @@ class ComicForm(FlaskForm):
     is_wishlist = BooleanField('Add to Wishlist')
     submit = SubmitField('Save Comic')
 
+
+class SeriesForm(FlaskForm):
+    """Form for maintaining canonical comic series information."""
+    name = StringField('Series Name', validators=[DataRequired(), Length(max=200)])
+    volume = StringField('Volume', validators=[Optional(), Length(max=50)],
+                         description='Volume identifier (e.g., 1, 2, 2015).')
+    publisher = StringField('Publisher', validators=[Optional(), Length(max=100)])
+    date_range = StringField('Date Range', validators=[Optional(), Length(max=200)],
+                             description='e.g., March 1963 – September 1996')
+    notes = TextAreaField('Notes', validators=[Optional(), Length(max=1000)])
+    submit = SubmitField('Save Series')
+
 class SearchForm(FlaskForm):
     """Form for searching comics."""
     search_query = StringField('Search', validators=[Optional(), Length(max=100)])
@@ -123,3 +135,23 @@ class SearchForm(FlaskForm):
     genre_filter = StringField('Genre', validators=[Optional(), Length(max=100)])
     wishlist_only = BooleanField('Wishlist Only')
     submit = SubmitField('Search')
+
+
+class SeriesIssueForm(FlaskForm):
+    """Form for manually adding a canonical issue to a series."""
+    series_id = SelectField('Series', coerce=int, validators=[DataRequired()])
+    issue_number = StringField('Issue Number', validators=[DataRequired(), Length(max=50)])
+    title = StringField('Title', validators=[Optional(), Length(max=255)])
+    cover_date = StringField('Cover Date', validators=[Optional(), Length(max=100)])
+    featured_characters = TextAreaField('Featured Characters', validators=[Optional()])
+    writer = StringField('Writer', validators=[Optional(), Length(max=200)])
+    artist = StringField('Artist', validators=[Optional(), Length(max=200)])
+    story_arc = StringField('Story Arc', validators=[Optional(), Length(max=200)])
+    submit_add = SubmitField('Add Issue')
+
+
+class SeriesIssueUploadForm(FlaskForm):
+    """Form for uploading canonical issues via CSV."""
+    series_id = SelectField('Series', coerce=int, validators=[DataRequired()])
+    file = FileField('CSV File', validators=[DataRequired(), FileAllowed(['csv'], 'CSV files only')])
+    submit_upload = SubmitField('Upload CSV')

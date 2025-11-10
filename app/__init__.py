@@ -9,6 +9,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_migrate import Migrate
 from flask_mail import Mail
+from markupsafe import Markup, escape
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -86,19 +87,29 @@ def create_app(test_config=None):
     from .main import main_bp
     from .comics import comics_bp
     from .dashboard import dashboard_bp
+    from .admin import admin_bp
     
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(comics_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(admin_bp)
     
     # Import models for database creation
-    from .models import User, Comic
+    from .models import User, Comic, Series, SeriesIssue
     
     # User loader for Flask-Login
     @login_manager.user_loader
     def load_user(user_id):
         return User.query.get(int(user_id))
+
+    @app.template_filter('nl2br')
+    def nl2br_filter(value):
+        """Convert newlines to <br> tags while escaping HTML."""
+        if value is None:
+            return ''
+        escaped = escape(value)
+        return Markup('<br>'.join(escaped.splitlines()))
     
     # Create database tables
     with app.app_context():

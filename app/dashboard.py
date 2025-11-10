@@ -47,7 +47,7 @@ def index():
     # Get recent additions
     recent_comics = Comic.query.filter_by(
         user_id=current_user.id, is_wishlist=False
-    ).order_by(Comic.created_at.desc()).limit(5).all()
+    ).order_by(Comic.created_at.desc()).limit(9).all()
     
     # Get condition distribution
     condition_stats = db.session.query(

@@ -66,6 +66,77 @@ class User(UserMixin, db.Model):
     def __repr__(self):
         return f'<User {self.username}>'
 
+class Series(db.Model):
+    """
+    Series model for maintaining canonical comic series and volume information.
+    """
+    __tablename__ = 'series'
+    __table_args__ = (
+        db.UniqueConstraint('name', 'volume', name='uq_series_name_volume'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    volume = db.Column(db.String(50))
+    publisher = db.Column(db.String(100))
+    date_range = db.Column(db.String(200))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    issues = db.relationship('SeriesIssue', backref='series', cascade='all, delete-orphan', lazy=True)
+
+    @property
+    def display_name(self):
+        """Return a friendly display name such as 'Amazing Spider-Man Vol. 1'."""
+        if self.volume:
+            volume = self.volume.strip()
+            if volume.lower().startswith('vol'):
+                return f"{self.name} {volume}"
+            return f"{self.name} Vol. {volume}"
+        return self.name
+
+    def __repr__(self):
+        if self.volume:
+            return f"<Series {self.display_name}>"
+        return f"<Series {self.name}>"
+
+
+class SeriesIssue(db.Model):
+    """
+    Canonical comic data stored per series (issue metadata).
+    """
+    __tablename__ = 'series_issue'
+
+    id = db.Column(db.Integer, primary_key=True)
+    series_id = db.Column(db.Integer, db.ForeignKey('series.id'), nullable=False)
+    issue_number = db.Column(db.String(50), nullable=False)
+    title = db.Column(db.String(255))
+    cover_date = db.Column(db.String(100))
+    featured_characters = db.Column(db.Text)
+    writer = db.Column(db.String(200))
+    artist = db.Column(db.String(200))
+    story_arc = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<SeriesIssue {self.issue_number} - {self.title or ''}>"
+
+    @property
+    def sort_key(self):
+        """Sort key for ordering issues numeric then suffix."""
+        issue = (self.issue_number or '').strip()
+        if not issue:
+            return (float('inf'), '')
+        import re
+        match = re.match(r'(\d+(?:\.\d+)?)\s*(.*)', issue)
+        if match:
+            num = float(match.group(1))
+            suffix = (match.group(2) or '').strip().lower()
+            return (num, suffix)
+        return (float('inf'), issue.lower())
+
+
 class Comic(db.Model):
     """
     Comic model for storing comic book information.
