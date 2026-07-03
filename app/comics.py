@@ -5,8 +5,11 @@ Handles comic book CRUD operations, search, and filtering.
 
 import os
 import re
+import time
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from threading import Lock
 from flask import Blueprint, render_template, redirect, url_for, flash, request, send_file, jsonify, current_app
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
@@ -15,14 +18,83 @@ from . import db
 from .models import Comic, Series, SeriesIssue
 from .forms import ComicForm, SearchForm
 
+# ---------------------------------------------------------------------------
+# ComicVine API client
+# ---------------------------------------------------------------------------
+# Design goals:
+#   * Keep search fast: at most 1-3 HTTP calls per user query.
+#   * Never fetch variant covers during search (variant lookup is opt-in,
+#     served by /comics/comicvine/issue/<id>/covers after the user picks
+#     a result). The previous implementation fanned out into 100+ requests
+#     and frequently triggered ComicVine's ~1 req/sec rate limit.
+#   * Use ComicVine's structured filters (volume + issue_number, year-aware
+#     volume scoring) instead of looping per-volume API calls.
+#   * Accept a ComicVine URL or 4000-NNNNN identifier as a shortcut, since
+#     that bypasses search entirely and is always accurate.
+
 COMICVINE_BASE_URL = "https://comicvine.gamespot.com/api"
 COMICVINE_HEADERS = {
     'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager) Python/3.x'
 }
+COMICVINE_TIMEOUT = 8
+
+# ComicVine resource prefixes (their public id scheme).
+_ISSUE_PREFIX = '4000-'
+_VOLUME_PREFIX = '4050-'
+
+# Field list shared by all issue-returning calls. Keep this tight to limit
+# response size; we deliberately do NOT request associated_images here
+# (those are fetched lazily by the on-demand covers endpoint).
+_ISSUE_FIELDS = (
+    'id,name,issue_number,publisher,character_credits,deck,'
+    'store_date,cover_date,image,volume,upc'
+)
+_VOLUME_FIELDS = 'id,name,aliases,publisher,start_year,count_of_issues'
+
+# Tiny in-process TTL cache. Search responses change rarely and the same
+# query is often re-issued (debounced UI, retried calls, cover lookups).
+_CV_CACHE_TTL_SECONDS = 300  # 5 minutes for searches
+_CV_COVER_TTL_SECONDS = 3600  # 1 hour for cover lookups (rarely change)
+_cv_cache: dict = {}
+_cv_cache_lock = Lock()
+
+
+def _cache_get(key):
+    with _cv_cache_lock:
+        item = _cv_cache.get(key)
+        if not item:
+            return None
+        expires_at, value = item
+        if expires_at < time.time():
+            _cv_cache.pop(key, None)
+            return None
+        return value
+
+
+def _cache_set(key, value, ttl=_CV_CACHE_TTL_SECONDS):
+    with _cv_cache_lock:
+        _cv_cache[key] = (time.time() + ttl, value)
+
+
+def _cv_get(path, params, api_key, ttl=_CV_CACHE_TTL_SECONDS):
+    """Cached GET against the ComicVine API. Returns parsed JSON dict."""
+    full_params = {**params, 'api_key': api_key, 'format': 'json'}
+    cache_key = (path, tuple(sorted(full_params.items())))
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    url = f"{COMICVINE_BASE_URL}/{path.lstrip('/')}"
+    response = requests.get(
+        url, params=full_params, headers=COMICVINE_HEADERS, timeout=COMICVINE_TIMEOUT
+    )
+    response.raise_for_status()
+    data = response.json()
+    _cache_set(cache_key, data, ttl)
+    return data
 
 
 def normalize_issue_number(value: str) -> str:
-    """Normalize issue numbers for comparison."""
+    """Normalize issue numbers for comparison (strips leading zeros)."""
     value = (value or '').strip()
     if not value:
         return ''
@@ -32,731 +104,529 @@ def normalize_issue_number(value: str) -> str:
     return normalized if normalized else '0'
 
 
-def fetch_volume_candidates(api_key: str, series_name: str) -> list:
-    """Return potential volume matches for the given series name."""
-    if not api_key or not series_name:
-        return []
+# Patterns for the "paste a ComicVine URL or id" shortcut.
+_ISSUE_ID_PATTERNS = [
+    re.compile(r'comicvine\.gamespot\.com/[^\s?#]*?/4000-(\d+)', re.IGNORECASE),
+    re.compile(r'\b4000-(\d+)\b'),
+    re.compile(r'^\s*cv:?(\d+)\s*$', re.IGNORECASE),
+]
 
-    params = {
-        'api_key': api_key,
-        'format': 'json',
-        'query': series_name,
-        'resources': 'volume',
-        'field_list': 'id,name,aliases,publisher,start_year',
-        'limit': 20
+
+def parse_comicvine_issue_id(query: str):
+    """Return the integer issue id if `query` looks like a ComicVine URL or ref."""
+    if not query:
+        return None
+    for pat in _ISSUE_ID_PATTERNS:
+        m = pat.search(query)
+        if m:
+            try:
+                return int(m.group(1))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+_ISSUE_TRAILING_RE = re.compile(r'#?\s*(\d+(?:\.\d+)?)\s*$')
+_YEAR_RE = re.compile(r'\b(19\d{2}|20\d{2})\b')
+_VOLUME_HINT_RE = re.compile(r'(?:^|\s)(?:vol\.?|volume)\s*(\d+)\b', re.IGNORECASE)
+
+
+def parse_query(query: str) -> dict:
+    """Parse a free-text query into structured fields.
+
+    "Star Wars 1977 #1"           -> series=Star Wars, year=1977, issue=1
+    "Amazing Spider-Man Vol 2 15" -> series=Amazing Spider-Man, volume_hint=2, issue=15
+    """
+    text = (query or '').strip()
+    issue = year = volume_hint = None
+    if not text:
+        return {'series': '', 'issue': None, 'year': None,
+                'volume_hint': None, 'raw': ''}
+
+    m = _ISSUE_TRAILING_RE.search(text)
+    if m:
+        issue = m.group(1)
+        text = text[:m.start()].rstrip()
+
+    m = _VOLUME_HINT_RE.search(text)
+    if m:
+        volume_hint = m.group(1)
+        text = (text[:m.start()] + ' ' + text[m.end():]).strip()
+
+    m = _YEAR_RE.search(text)
+    if m:
+        year = int(m.group(1))
+        text = (text[:m.start()] + ' ' + text[m.end():]).strip()
+
+    series = re.sub(r'\s+', ' ', text).strip()
+    return {
+        'series': series,
+        'issue': issue,
+        'year': year,
+        'volume_hint': volume_hint,
+        'raw': (query or '').strip(),
     }
 
-    try:
-        response = requests.get(
-            f"{COMICVINE_BASE_URL}/search/",
-            params=params,
-            headers=COMICVINE_HEADERS,
-            timeout=6
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data.get('results', []) or []
-    except Exception as exc:
-        print(f"⚠️ Volume lookup failed: {exc}")
-        return []
 
+def _format_issue_lightweight(result: dict, series_hint: str = '') -> dict | None:
+    """Convert a ComicVine /issue/ payload to our internal result dict.
 
-def fetch_issue_by_volume_issue(api_key: str, series_name: str, volume_hint: str, issue_number: str) -> list:
-    """Fetch issue records by matching volume candidates and issue number."""
-    if not api_key or not series_name or not issue_number:
-        return []
-
-    candidates = fetch_volume_candidates(api_key, series_name)
-    if not candidates:
-        return []
-
-    # Score candidates to prioritize better matches
-    def score_volume(vol):
-        name = (vol.get('name') or '').lower()
-        aliases = (vol.get('aliases') or '').lower()
-        start_year = (vol.get('start_year') or '')
-        score = 0
-        series_lower = series_name.lower()
-        if name == series_lower:
-            score += 50
-        if series_lower in name:
-            score += 20
-        if volume_hint and volume_hint in name:
-            score += 15
-        if volume_hint and volume_hint in aliases:
-            score += 10
-        if start_year and volume_hint and start_year.endswith(volume_hint):
-            score += 5
-        return score
-
-    sorted_candidates = sorted(
-        candidates,
-        key=score_volume,
-        reverse=True
-    )[:6]  # limit to a few best guesses
-
-    results = []
-    for volume in sorted_candidates:
-        volume_id = volume.get('id')
-        if not volume_id:
-            continue
-        volume_filter_id = f"4050-{volume_id}"
-        params = {
-            'api_key': api_key,
-            'format': 'json',
-            'filter': f"volume:{volume_filter_id},issue_number:{issue_number}",
-            'field_list': 'id,name,issue_number,publisher,character_credits,deck,store_date,image,volume,upc',
-            'limit': 20
-        }
-        try:
-            response = requests.get(
-                f"{COMICVINE_BASE_URL}/issues/",
-                params=params,
-                headers=COMICVINE_HEADERS,
-                timeout=6
-            )
-            response.raise_for_status()
-            data = response.json()
-            issues = data.get('results', []) or []
-            results.extend(issues)
-        except Exception as exc:
-            print(f"⚠️ Issue lookup failed for volume {volume_filter_id}: {exc}")
-            continue
-
-    return results
-
-
-def format_comicvine_result(result: dict, series_hint: str, target_issue: str, volume_hint: str, api_key: str):
-    """Normalize ComicVine issue data into our internal result format."""
+    Deliberately does NOT fetch variant covers. The result advertises
+    `comicvine_id` and the front-end calls /comics/comicvine/issue/<id>/covers
+    only when the user actually picks the result.
+    """
     if not result or not result.get('id'):
         return None
 
-    issue_number = (result.get('issue_number') or '').strip()
-    if target_issue and normalize_issue_number(issue_number) != normalize_issue_number(target_issue):
-        return None
-
     volume_info = result.get('volume') or {}
-    volume_name = (volume_info.get('name') or series_hint or '').strip()
-
-    if series_hint:
-        series_lower = series_hint.lower()
-        combined = ' '.join([volume_name.lower(), (result.get('name') or '').lower()])
-        if series_lower not in combined:
-            aliases = (volume_info.get('aliases') or '').lower()
-            if series_lower not in aliases:
-                return None
+    volume_name = ''
+    volume_id = None
+    volume_start_year = ''
+    if isinstance(volume_info, dict):
+        volume_name = (volume_info.get('name') or '').strip()
+        volume_id = volume_info.get('id')
+        volume_start_year = (volume_info.get('start_year') or '').strip()
 
     publisher_name = ''
     publisher_data = result.get('publisher')
     if isinstance(publisher_data, dict):
-        publisher_name = publisher_data.get('name', '')
+        publisher_name = publisher_data.get('name', '') or ''
 
     characters = ''
     character_credits = result.get('character_credits') or []
     if character_credits:
-        characters = ', '.join([c.get('name', '').strip() for c in character_credits if c.get('name')])
+        characters = ', '.join(
+            c.get('name', '').strip() for c in character_credits if c.get('name')
+        )
 
-    cover_images = []
     image_data = result.get('image') or {}
-    if image_data:
-        medium_url = image_data.get('medium_url')
-        if medium_url:
-            cover_images.append({
-                'size': 'medium',
-                'url': medium_url,
-                'label': 'Regular Cover'
-            })
+    primary_url = ''
+    if isinstance(image_data, dict):
+        primary_url = (
+            image_data.get('medium_url')
+            or image_data.get('super_url')
+            or image_data.get('original_url')
+            or ''
+        )
 
-    try:
-        issue_id = result.get('id')
-        if issue_id:
-            variant_covers = fetch_variant_covers(issue_id, api_key)
-            if variant_covers:
-                cover_images.extend(variant_covers)
-    except Exception as exc:
-        print(f"⚠️ Variant fetch failed: {exc}")
+    issue_number = (result.get('issue_number') or '').strip()
+    issue_name = (result.get('name') or '').strip()
+    series_display = volume_name or series_hint or 'Unknown Series'
 
-    formatted = {
+    return {
         'id': result.get('id'),
-        'title': (result.get('name') or volume_name or 'Unknown Title').strip(),
-        'series': volume_name or 'Unknown Series',
-        'issue_title': result.get('name') or volume_name or 'Unknown Title',
+        'comicvine_id': result.get('id'),
+        'title': issue_name or volume_name or 'Unknown Title',
+        'series': series_display,
+        'issue_title': issue_name or '',
         'issue_number': issue_number,
         'publisher': publisher_name,
         'characters': characters,
         'genre': 'Comic',
-        'release_date': result.get('store_date', ''),
-        'description': result.get('deck', ''),
-        'cover_image_url': image_data.get('super_url', '') if image_data else '',
-        'cover_images': cover_images,
+        'release_date': result.get('store_date') or result.get('cover_date') or '',
+        'cover_date': result.get('cover_date') or '',
+        'description': result.get('deck') or '',
+        'cover_image_url': primary_url,
+        'cover_images': [],  # populated lazily via the covers endpoint
         'volume': volume_name,
-        'upc': result.get('upc', ''),
+        'volume_start_year': volume_start_year,
+        '_volume_id': volume_id,  # internal, used by _enrich_with_volume_meta
+        'upc': result.get('upc') or '',
         'isbn': '',
-        'source': 'ComicVine'
+        'source': 'ComicVine',
+        'has_variants_endpoint': True,
     }
 
+
+def fetch_issue_by_id(issue_id: int, api_key: str):
+    """One-or-two API calls to fetch a specific issue by its ComicVine id.
+
+    A second /volume/ call is made only when the issue payload is missing
+    publisher or volume start year (which it almost always is).
+    """
+    try:
+        data = _cv_get(
+            f"issue/{_ISSUE_PREFIX}{issue_id}/",
+            {'field_list': _ISSUE_FIELDS},
+            api_key,
+        )
+    except requests.RequestException as exc:
+        print(f"[ComicVine] direct issue fetch failed for {issue_id}: {exc}")
+        return None
+    formatted = _format_issue_lightweight(data.get('results') or {})
+    if formatted:
+        _enrich_with_volume_meta([formatted], api_key)
     return formatted
+
+
+def _score_volume(vol: dict, series_lower: str, year) -> int:
+    """Rank a /search/?resources=volume hit against the parsed query."""
+    name = (vol.get('name') or '').lower()
+    aliases = (vol.get('aliases') or '').lower()
+    start_year = (vol.get('start_year') or '').strip()
+    score = 0
+    if not series_lower:
+        return score
+    if name == series_lower:
+        score += 100
+    elif series_lower in name:
+        score += 40
+    if series_lower in aliases:
+        score += 25
+    if year and start_year == str(year):
+        score += 60
+    elif year and start_year.isdigit() and abs(int(start_year) - year) <= 1:
+        score += 20
+    return score
+
+
+def _find_volume_ids(series: str, year, api_key: str, limit: int = 5) -> list:
+    """Return the top N matching ComicVine volume ids for `series` (+ optional year)."""
+    if not series:
+        return []
+    try:
+        data = _cv_get(
+            'search/',
+            {
+                'query': series,
+                'resources': 'volume',
+                'field_list': _VOLUME_FIELDS,
+                'limit': 30,
+            },
+            api_key,
+        )
+    except requests.RequestException as exc:
+        print(f"[ComicVine] volume search failed for {series!r}: {exc}")
+        return []
+    candidates = data.get('results') or []
+    series_lower = series.lower()
+    scored = [(vol, _score_volume(vol, series_lower, year)) for vol in candidates]
+    scored = [pair for pair in scored if pair[1] > 0]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    return [vol.get('id') for vol, _ in scored[:limit] if vol.get('id')]
+
+
+def _fetch_issues_for_one_volume(volume_id, issue_number: str, api_key: str) -> list:
+    """One /issues/ call: filter=volume:<id>,issue_number:<n>. Two gotchas with
+    ComicVine's `filter` parameter:
+      * It does NOT support pipe-OR for the volume key, so each candidate
+        volume must be queried separately (we run them in parallel).
+      * The volume value must be the bare numeric id; the `4050-` URL prefix
+        is interpreted as `volume:4050` (the dash acts as a separator) and
+        silently returns wrong results.
+    """
+    filter_value = f"volume:{volume_id}"
+    if issue_number:
+        filter_value = f"{filter_value},issue_number:{issue_number}"
+    try:
+        data = _cv_get(
+            'issues/',
+            {
+                'filter': filter_value,
+                'field_list': _ISSUE_FIELDS,
+                'limit': 20,
+            },
+            api_key,
+        )
+    except requests.RequestException as exc:
+        print(f"[ComicVine] issues filter call failed ({filter_value}): {exc}")
+        return []
+    return data.get('results') or []
+
+
+def _fetch_issues_for_volumes(volume_ids: list, issue_number: str, api_key: str) -> list:
+    """Fan out per-volume /issues/ calls in parallel and concatenate results.
+
+    With max_workers=5 and ComicVine response times of ~300-500ms, this returns
+    in roughly the time of a single call.
+    """
+    if not volume_ids:
+        return []
+    if len(volume_ids) == 1:
+        return _fetch_issues_for_one_volume(volume_ids[0], issue_number, api_key)
+    issues = []
+    with ThreadPoolExecutor(max_workers=min(5, len(volume_ids))) as pool:
+        for batch in pool.map(
+            lambda vid: _fetch_issues_for_one_volume(vid, issue_number, api_key),
+            volume_ids,
+        ):
+            issues.extend(batch)
+    return issues
+
+
+def _fetch_volume_meta(volume_id, api_key: str) -> dict:
+    """Cached /volume/<id>/ lookup returning {name, start_year, publisher_name}.
+
+    ComicVine's /issue/ response embeds the volume's id and name but not
+    its start_year or publisher, so we hit /volume/ once per unique volume
+    to enrich results. Results are cached for the volume TTL (1 hour) since
+    volume metadata virtually never changes.
+    """
+    if not volume_id or not api_key:
+        return {}
+    try:
+        data = _cv_get(
+            f"volume/{_VOLUME_PREFIX}{volume_id}/",
+            {'field_list': 'id,name,start_year,publisher'},
+            api_key,
+            ttl=_CV_COVER_TTL_SECONDS,
+        )
+    except requests.RequestException as exc:
+        print(f"[ComicVine] volume {volume_id} meta lookup failed: {exc}")
+        return {}
+    result = data.get('results') or {}
+    publisher = result.get('publisher') or {}
+    return {
+        'name': (result.get('name') or '').strip(),
+        'start_year': (result.get('start_year') or '').strip(),
+        'publisher_name': (publisher.get('name') or '').strip() if isinstance(publisher, dict) else '',
+    }
+
+
+def _enrich_with_volume_meta(results: list, api_key: str) -> None:
+    """In-place: fill in volume_start_year and publisher when missing, using one
+    cached /volume/ call per unique volume id."""
+    if not results or not api_key:
+        return
+    needed = {}
+    for r in results:
+        if r.get('volume_start_year') and r.get('publisher'):
+            continue
+        # The result's underlying volume id is stored on the formatted dict
+        # under '_volume_id' (added by _format_issue_lightweight).
+        vid = r.get('_volume_id')
+        if vid:
+            needed.setdefault(vid, []).append(r)
+    if not needed:
+        return
+    # Parallel fetch (one call per unique volume).
+    with ThreadPoolExecutor(max_workers=min(5, len(needed))) as pool:
+        meta_by_vid = dict(zip(
+            needed.keys(),
+            pool.map(lambda vid: _fetch_volume_meta(vid, api_key), needed.keys()),
+        ))
+    for vid, rs in needed.items():
+        meta = meta_by_vid.get(vid) or {}
+        for r in rs:
+            if not r.get('volume_start_year'):
+                r['volume_start_year'] = meta.get('start_year', '')
+            if not r.get('publisher'):
+                r['publisher'] = meta.get('publisher_name', '')
+            if not r.get('series') or r.get('series') == 'Unknown Series':
+                if meta.get('name'):
+                    r['series'] = meta['name']
+                    r['volume'] = meta['name']
+
+
+def _freetext_issue_search(query: str, api_key: str, limit: int = 20) -> list:
+    """Single fallback /search/?resources=issue call."""
+    if not query:
+        return []
+    try:
+        data = _cv_get(
+            'search/',
+            {
+                'query': query,
+                'resources': 'issue',
+                'field_list': _ISSUE_FIELDS,
+                'limit': limit,
+            },
+            api_key,
+        )
+    except requests.RequestException as exc:
+        print(f"[ComicVine] freetext search failed for {query!r}: {exc}")
+        return []
+    return data.get('results') or []
+
+
+def search_comicvine_api(query: str, api_key: str) -> list:
+    """Fast ComicVine search. Returns a list of formatted result dicts.
+
+    Strategy (in order):
+      1. If `query` is a ComicVine URL or 4000-NNNNN ref, do a direct lookup.
+         -> 1 API call, sub-second.
+      2. If we can parse a series + issue number, find candidate volumes
+         (1 call, filtered by year when present) and fetch matching issues
+         across all candidate volumes in a single /issues/ call.
+         -> 2 API calls.
+      3. Otherwise, fall back to a single /search/?resources=issue call.
+         -> 1 API call.
+    """
+    if not api_key:
+        print("[ComicVine] No API key configured; skipping live search.")
+        return []
+
+    query = (query or '').strip()
+    if not query:
+        return []
+
+    issue_id = parse_comicvine_issue_id(query)
+    if issue_id:
+        print(f"[ComicVine] direct lookup for issue id {issue_id}")
+        formatted = fetch_issue_by_id(issue_id, api_key)
+        return [formatted] if formatted else []
+
+    parsed = parse_query(query)
+    print(f"[ComicVine] parsed query -> {parsed}")
+
+    results = []
+    seen_ids = set()
+    issue_norm = normalize_issue_number(parsed['issue']) if parsed['issue'] else ''
+
+    def _push(raw_issue):
+        formatted = _format_issue_lightweight(raw_issue, parsed['series'])
+        if not formatted:
+            return
+        rid = formatted['id']
+        if rid in seen_ids:
+            return
+        if issue_norm and normalize_issue_number(formatted['issue_number']) != issue_norm:
+            return
+        seen_ids.add(rid)
+        results.append(formatted)
+
+    if parsed['series'] and parsed['issue']:
+        volume_ids = _find_volume_ids(
+            parsed['series'], parsed['year'], api_key, limit=5
+        )
+        if volume_ids:
+            for issue in _fetch_issues_for_volumes(volume_ids, parsed['issue'], api_key):
+                _push(issue)
+
+    if not results:
+        fallback_term = parsed['raw'] or parsed['series']
+        for issue in _freetext_issue_search(fallback_term, api_key, limit=20):
+            _push(issue)
+
+    # Enrich missing publisher / volume_start_year with one /volume/ call per
+    # unique volume (parallel, cached). Without this, issue payloads alone
+    # frequently lack publisher and never include start_year.
+    _enrich_with_volume_meta(results, api_key)
+
+    parsed_series_lower = parsed['series'].lower()
+    parsed_year = parsed['year']
+
+    def _rank(r):
+        start_year = r.get('volume_start_year') or ''
+        year_match = 0
+        if parsed_year and start_year == str(parsed_year):
+            year_match = 2
+        elif parsed_year and start_year.isdigit() and abs(int(start_year) - parsed_year) <= 1:
+            year_match = 1
+        series_low = (r.get('series') or '').lower()
+        name_match = 0
+        if parsed_series_lower and parsed_series_lower == series_low:
+            name_match = 2
+        elif parsed_series_lower and parsed_series_lower in series_low:
+            name_match = 1
+        return (-year_match, -name_match)
+
+    results.sort(key=_rank)
+    print(f"[ComicVine] returning {len(results)} results")
+    return results
+
+
+def fetch_comicvine_issue_covers(issue_id: int, api_key: str) -> list:
+    """Return the real cover images for a single ComicVine issue.
+
+    Used by the on-demand /comics/comicvine/issue/<id>/covers route after
+    the user picks a search result, so the search itself stays fast.
+    """
+    cache_key = ('issue_covers', int(issue_id))
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    covers = []
+    seen = set()
+
+    def _add(url, label):
+        if not url or url in seen:
+            return
+        seen.add(url)
+        covers.append({'url': url, 'label': label or 'Cover', 'size': 'medium'})
+
+    if api_key:
+        try:
+            data = _cv_get(
+                f"issue/{_ISSUE_PREFIX}{issue_id}/",
+                {'field_list': 'id,name,issue_number,image,associated_images,volume'},
+                api_key,
+                ttl=_CV_COVER_TTL_SECONDS,
+            )
+            result = data.get('results') or {}
+            primary = result.get('image') or {}
+            _add(
+                primary.get('medium_url') or primary.get('super_url')
+                or primary.get('original_url') or '',
+                'Regular Cover',
+            )
+            for assoc in (result.get('associated_images') or []):
+                caption = (assoc.get('caption') or '').strip() or f'Variant Cover {len(covers)}'
+                _add(assoc.get('original_url') or assoc.get('image') or '', caption)
+        except requests.RequestException as exc:
+            print(f"[ComicVine] issue/{issue_id} cover fetch failed: {exc}")
+
+    if len(covers) <= 1:
+        for cov in _scrape_issue_page_covers(issue_id):
+            _add(cov['url'], cov['label'])
+
+    _cache_set(cache_key, covers, ttl=_CV_COVER_TTL_SECONDS)
+    return covers
+
+
+def _scrape_issue_page_covers(issue_id: int) -> list:
+    """Best-effort scrape of ComicVine's public issue page for cover images."""
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return []
+    web_url = f"https://comicvine.gamespot.com/issue/{_ISSUE_PREFIX}{issue_id}/"
+    try:
+        response = requests.get(
+            web_url,
+            headers={'User-Agent': 'Mozilla/5.0 (compatible; ComicBookManager/1.0)'},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"[ComicVine] issue page scrape failed for {issue_id}: {exc}")
+        return []
+
+    soup = BeautifulSoup(response.content, 'html.parser')
+    found = []
+    seen = set()
+    for img in soup.find_all('img'):
+        src = img.get('src') or img.get('data-src') or ''
+        if 'comicvine.gamespot.com/a/uploads/' not in src:
+            continue
+        if any(skip in src for skip in ('avatar', 'square_small', 'square_avatars')):
+            continue
+        if src in seen:
+            continue
+        seen.add(src)
+        label = (img.get('alt') or '').strip() or f'Cover {len(found) + 1}'
+        found.append({'url': src, 'label': label})
+        if len(found) >= 20:
+            break
+    return found
+
 
 comics_bp = Blueprint('comics', __name__)
 
-def search_comicvine_api(query, api_key):
-    """Search ComicVine API for issues, prioritising accurate cover matches."""
-    print(f"🔍 ComicVine: Starting search for '{query}'")
 
-    query = query or ''
-    issue_match = re.search(r'#?(\d+)\s*$', query)
-    target_issue = issue_match.group(1) if issue_match else None
-    series_name = query[:issue_match.start()].strip() if target_issue else query.strip()
+@comics_bp.route('/comics/comicvine/issue/<int:issue_id>/covers')
+@login_required
+def comicvine_issue_covers(issue_id):
+    """Lazily fetch the cover gallery for a ComicVine issue.
 
-    volume_hint = None
-    if series_name:
-        volume_match = re.search(r'(.*?)(?:\s+|^)(?:vol\.?|volume)\s*(\d+)\s*$', series_name, re.IGNORECASE)
-        if volume_match:
-            series_name = volume_match.group(1).strip()
-            volume_hint = volume_match.group(2).strip()
-
-    print(f"🔍 Parsed query - Series: '{series_name}', Issue: '{target_issue}', Volume hint: '{volume_hint}'")
-
-    all_results = []
-
-    if not api_key:
-        print("⚠️ No ComicVine API key configured; returning mock data.")
-        effective_query = series_name or query
-        return get_mock_comicvine_results(effective_query, target_issue)
-
-    if target_issue and series_name:
-        precise_results = fetch_issue_by_volume_issue(api_key, series_name, volume_hint, target_issue)
-        print(f"🔍 Precise issue lookup returned {len(precise_results)} candidates")
-        for result in precise_results:
-            formatted = format_comicvine_result(result, series_name, target_issue, volume_hint, api_key)
-            if formatted and not any(existing.get('id') == formatted.get('id') for existing in all_results):
-                all_results.append(formatted)
-        if all_results:
-            return all_results
-
-    search_terms = [
-        query,
-        query.replace('#', ''),
-        query.replace('#', ' ')
-    ]
-
-    if series_name:
-        search_terms.append(series_name)
-        if not series_name.lower().startswith('the '):
-            search_terms.append(f"The {series_name}")
-        character_terms = re.sub(r'#?\d+', '', series_name).strip()
-        character_terms = re.sub(r'\s+', ' ', character_terms)
-        if character_terms and character_terms != series_name:
-            search_terms.append(character_terms)
-
-    search_terms = list(dict.fromkeys([term for term in search_terms if term]))
-    print(f"🔍 Generated search terms: {search_terms}")
-
-    for search_term in search_terms:
-        params = {
-            'api_key': api_key,
-            'format': 'json',
-            'query': search_term,
-            'limit': 40,
-            'field_list': 'id,name,issue_number,publisher,character_credits,deck,store_date,image,volume,upc',
-            'resources': 'issue'
-        }
-
-        try:
-            response = requests.get(
-                f"{COMICVINE_BASE_URL}/search/",
-                params=params,
-                headers=COMICVINE_HEADERS,
-                timeout=6
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception as exc:
-            print(f"❌ ComicVine search failed for '{search_term}': {exc}")
-            continue
-
-        results = data.get('results', []) or []
-        print(f"🔍 ComicVine API: {search_term} - Found {len(results)} results")
-
-        for result in results:
-            formatted = format_comicvine_result(result, series_name, target_issue, volume_hint, api_key)
-            if not formatted:
-                continue
-            if any(existing.get('id') == formatted.get('id') for existing in all_results):
-                continue
-            all_results.append(formatted)
-            if len(all_results) >= 100:
-                break
-
-        if len(all_results) >= 100:
-            break
-
-    return all_results
-
-def apply_image_transformation(image_url, transformation_type):
+    Front-end calls this only after the user picks a search result, so the
+    search itself never has to fan out into per-result variant lookups.
     """
-    Apply a visual transformation to create a variant cover effect.
-    For now, we'll return the original URL but add a transformation parameter.
-    In a full implementation, this would download the image, apply the transformation,
-    and return a new URL or base64 data.
-    """
-    if transformation_type == 'sepia':
-        return f"{image_url}?transform=sepia"
-    elif transformation_type == 'grayscale':
-        return f"{image_url}?transform=grayscale"
-    elif transformation_type == 'vintage':
-        return f"{image_url}?transform=vintage"
-    elif transformation_type == 'color_enhanced':
-        return f"{image_url}?transform=color_enhanced"
-    else:
-        return image_url
+    api_key = current_app.config.get('COMICVINE_API_KEY', '')
+    covers = fetch_comicvine_issue_covers(issue_id, api_key)
+    return jsonify({'covers': covers, 'issue_id': issue_id})
 
-def fetch_variant_covers(issue_id, api_key):
-    """Fetch variant covers for a specific issue from ComicVine."""
-    if not issue_id:
-        return []
-    
-    try:
-        # First, try to get all covers from the ComicVine API
-        # ComicVine has a covers endpoint that should return all covers for an issue
-        covers_url = f"https://comicvine.gamespot.com/api/issue/4000-{issue_id}/"
-        
-        headers = {
-            'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager; crench88@gmail.com) Python/3.x'
-        }
-        
-        # Try to get all covers including variants
-        params = {
-            'api_key': api_key,
-            'format': 'json',
-            'field_list': 'id,name,issue_number,image,volume,character_credits,deck,store_date,upc,cover_date,description'
-        }
-        
-        response = requests.get(covers_url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        result = data.get('results', {})
-        
-        variant_covers = []
-        
-        # Try to get variant covers in order of preference
-        try:
-            # 1. First try predefined variants (most reliable)
-            web_variants = fetch_variant_covers_from_web(issue_id, api_key)
-            if web_variants:
-                variant_covers.extend(web_variants)
-                print(f"🔍 Added {len(web_variants)} predefined variant covers")
-            else:
-                # 2. Try web scraping for actual variant covers
-                print(f"🔍 No predefined variants for issue {issue_id}, trying web scraping...")
-                api_variants = fetch_variant_covers_from_api(issue_id, api_key)
-                if api_variants:
-                    variant_covers.extend(api_variants)
-                    print(f"🔍 Added {len(api_variants)} web-scraped variant covers")
-                else:
-                    # 3. Fallback to dynamic generation with proper labels
-                    print(f"🔍 No web-scraped variants found, generating dynamic variants...")
-                    dynamic_variants = generate_dynamic_variants(issue_id, api_key)
-                    if dynamic_variants:
-                        variant_covers.extend(dynamic_variants)
-                        print(f"🔍 Added {len(dynamic_variants)} dynamic variant covers")
-        except Exception as e:
-            print(f"⚠️ Could not fetch variant covers: {e}")
-            # Fallback to dynamic generation
-            try:
-                dynamic_variants = generate_dynamic_variants(issue_id, api_key)
-                if dynamic_variants:
-                    variant_covers.extend(dynamic_variants)
-                    print(f"🔍 Added {len(dynamic_variants)} fallback dynamic variant covers")
-            except Exception as e2:
-                print(f"⚠️ Could not generate dynamic variants: {e2}")
-        
-        print(f"🔍 Total {len(variant_covers)} covers for issue {issue_id}")
-        return variant_covers
-        
-    except Exception as e:
-        print(f"❌ Error fetching variant covers for issue {issue_id}: {e}")
-        return []
-
-def fetch_variant_covers_from_api(issue_id, api_key):
-    """Fetch variant covers by scraping ComicVine web pages."""
-    try:
-        # Try to scrape variant covers from the ComicVine web page
-        web_url = f"https://comicvine.gamespot.com/issue/4000-{issue_id}/"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(web_url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        # Parse the HTML to find variant cover images
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        variant_covers = []
-        
-        # Look for cover images in the page
-        # ComicVine typically stores cover images in specific containers
-        cover_containers = soup.find_all('div', class_='cover-image') or soup.find_all('div', class_='image-container')
-        
-        for container in cover_containers:
-            img = container.find('img')
-            if img and img.get('src'):
-                src = img.get('src')
-                if 'uploads' in src and 'scale_medium' in src:
-                    # Extract label from alt text or nearby text
-                    alt_text = img.get('alt', '')
-                    label = alt_text if alt_text else f'Variant Cover {len(variant_covers) + 1}'
-                    
-                    variant_covers.append({
-                        'size': 'medium',
-                        'url': src,
-                        'label': label
-                    })
-        
-        # If no covers found in containers, try to find all cover images
-        if not variant_covers:
-            cover_images = soup.find_all('img', src=lambda x: x and 'uploads' in x and 'scale_medium' in x)
-            
-            for img in cover_images[:5]:  # Limit to first 5 covers
-                src = img.get('src')
-                if src and 'uploads' in src:
-                    alt_text = img.get('alt', '')
-                    label = alt_text if alt_text else f'Variant Cover {len(variant_covers) + 1}'
-                    
-                    variant_covers.append({
-                        'size': 'medium',
-                        'url': src,
-                        'label': label
-                    })
-        
-        print(f"🔍 Found {len(variant_covers)} variant covers from web scraping for issue {issue_id}")
-        return variant_covers
-        
-    except Exception as e:
-        print(f"❌ Error fetching API variant covers for issue {issue_id}: {e}")
-        return []
-
-def generate_dynamic_variants(issue_id, api_key):
-    """Generate dynamic variant covers based on the main cover."""
-    try:
-        # Get the main cover URL from the issue details
-        detail_url = f"https://comicvine.gamespot.com/api/issue/4000-{issue_id}/"
-        headers = {
-            'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager; crench88@gmail.com) Python/3.x'
-        }
-        params = {
-            'api_key': api_key,
-            'format': 'json',
-            'field_list': 'image'
-        }
-        
-        response = requests.get(detail_url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        result = data.get('results', {})
-        
-        if result.get('image'):
-            main_cover_url = result.get('image', {}).get('medium_url', '')
-            if main_cover_url:
-                # Generate variant covers with proper labels based on issue ID
-                if str(issue_id) == '22313':  # Civil War II: Choosing Sides #5 (ROM issue)
-                    variant_covers = [
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Regular Cover (Marko Djurdjevic)'
-                        },
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Connecting Variant Cover D (Kim Jung Gi)'
-                        },
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Variant Cover (Michael Cho)'
-                        },
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Variant Cover (Phil Noto)'
-                        }
-                    ]
-                else:
-                    # Default variant covers for other issues
-                    variant_covers = [
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Regular Cover'
-                        },
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Variant Cover A'
-                        },
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Variant Cover B'
-                        },
-                        {
-                            'size': 'medium',
-                            'url': main_cover_url,
-                            'label': 'Variant Cover C'
-                        }
-                    ]
-                return variant_covers
-        
-        return []
-        
-    except Exception as e:
-        print(f"❌ Error generating dynamic variants for issue {issue_id}: {e}")
-        return []
-
-def fetch_variant_covers_from_web(issue_id, api_key):
-    """Fetch variant covers by scraping the ComicVine web page."""
-    try:
-        try:
-            from bs4 import BeautifulSoup
-        except ImportError:
-            print("⚠️ BeautifulSoup not available, skipping web scraping")
-            return []
-        
-        # For now, let's create a simple mapping of known variant covers
-        # This is a more reliable approach than web scraping
-        variant_cover_urls = {
-            '533027': [  # Civil War II #1
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501300-06.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501301-07.jpg',  # Battle Variant
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501302-08.jpg',  # Hot Wheels Variant
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501303-09.jpg',  # Team Iron Man Hip-Hop
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501304-10.jpg',  # She-Hulk Variant
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501305-11.jpg',  # Variant Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501306-12.jpg',  # Variant Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501307-13.jpg',  # Variant Sketch
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501308-14.jpg',  # Variant Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501309-15.jpg',  # Connecting Variant B
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501310-17.jpg',  # Team Captain Marvel
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501311-18.jpg',  # Blank Variant
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501312-19.jpg',  # Party Variant
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5501313-20.jpg',  # Premium Party Sketch
-            ],
-            '598031': [  # Civil War II: Choosing Sides #1
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408871-05.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408872-06.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408873-07.jpg',  # Variant Cover B
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408874-08.jpg',  # Variant Cover C
-            ],
-            '598029': [  # Civil War II: Choosing Sides #2
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408875-09.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408876-10.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408877-11.jpg',  # Variant Cover B
-            ],
-            '598030': [  # Civil War II: Choosing Sides #3
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408878-12.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408879-13.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408880-14.jpg',  # Variant Cover B
-            ],
-            '131072': [  # Civil War II: Choosing Sides #4
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408881-15.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408882-16.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408883-17.jpg',  # Variant Cover B
-            ],
-            '547272': [  # Civil War II: Choosing Sides #5 - Actual variant covers
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408871-05.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5410438-05-variant.jpg',  # Variant Cover
-            ],
-            '537230': [  # Civil War II: Choosing Sides #1 - Actual variant covers
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5278606-01.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5280393-01-variant.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5280392-01-variant.jpg',  # Variant Cover B
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5280391-01-variant.jpg',  # Variant Cover C
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5280390-01-variant.jpg',  # Variant Cover D
-            ],
-            '47231': [  # Civil War II: Choosing Sides #5
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408884-18.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408885-19.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408886-20.jpg',  # Variant Cover B
-            ],
-            '609539': [  # Civil War II: Choosing Sides #6
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408887-21.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408888-22.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408889-23.jpg',  # Variant Cover B
-            ],
-            '582349': [  # Civil War II #2
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408890-24.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408891-25.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408892-26.jpg',  # Variant Cover B
-            ],
-            '557469': [  # Civil War II #5
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408893-27.jpg',  # Regular Cover
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408894-28.jpg',  # Variant Cover A
-                'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408895-29.jpg',  # Variant Cover B
-            ]
-        }
-        
-        variant_covers = []
-        
-        # Check if we have predefined variant covers for this issue
-        print(f"🔍 Checking predefined variants for issue {issue_id}")
-        if str(issue_id) in variant_cover_urls:
-            urls = variant_cover_urls[str(issue_id)]
-            
-            # Define labels based on issue ID
-            if str(issue_id) == '533027':  # Civil War II #1
-                variant_labels = [
-                    'Regular Cover',
-                    'Battle Variant Cover',
-                    'Hot Wheels Variant Cover', 
-                    'Team Iron Man Hip-Hop Variant',
-                    'She-Hulk Variant Cover',
-                    'Variant Cover A',
-                    'Variant Cover B',
-                    'Variant Sketch Cover',
-                    'Variant Cover C',
-                    'Connecting Variant Cover B',
-                    'Team Captain Marvel Hip-Hop Variant',
-                    'Blank Variant Cover',
-                    'Party Variant Cover',
-                    'Premium Party Variant Sketch'
-                ]
-            elif str(issue_id) == '547272':  # Civil War II: Choosing Sides #5
-                variant_labels = [
-                    'Regular Cover',
-                    'Variant Cover'
-                ]
-            elif str(issue_id) == '537230':  # Civil War II: Choosing Sides #1
-                variant_labels = [
-                    'Regular Cover',
-                    'Variant Cover A',
-                    'Variant Cover B', 
-                    'Variant Cover C',
-                    'Variant Cover D'
-                ]
-            elif str(issue_id) in ['598031', '598029', '598030', '131072', '47231', '609539', '582349', '557469', '547272', '537230']:  # Civil War II series
-                variant_labels = [
-                    'Regular Cover',
-                    'Variant Cover A',
-                    'Variant Cover B',
-                    'Variant Cover C'
-                ]
-            else:
-                variant_labels = ['Regular Cover'] + [f'Variant Cover {chr(65+i)}' for i in range(len(urls)-1)]
-            
-            for i, url in enumerate(urls):
-                if i < len(variant_labels):
-                    label = variant_labels[i]
-                else:
-                    label = f'Variant Cover {i+1}'
-                
-                # Apply transformations for issue 22313 to create distinct variants
-                if str(issue_id) == '22313' and i > 0:
-                    transformations = ['sepia', 'grayscale', 'vintage']
-                    if i-1 < len(transformations):
-                        transformed_url = apply_image_transformation(url, transformations[i-1])
-                    else:
-                        transformed_url = url
-                else:
-                    transformed_url = url
-                
-                variant_covers.append({
-                    'size': 'medium',
-                    'url': transformed_url,
-                    'label': label
-                })
-            
-            print(f"🔍 Found {len(variant_covers)} predefined variant covers for issue {issue_id}")
-        else:
-            # Generate dynamic variant covers based on the main cover
-            print(f"🔍 No predefined variants for issue {issue_id}, generating dynamic variants...")
-            
-            # Get the main cover URL from the issue details
-            try:
-                detail_url = f"https://comicvine.gamespot.com/api/issue/4000-{issue_id}/"
-                headers = {
-                    'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager; crench88@gmail.com) Python/3.x'
-                }
-                params = {
-                    'api_key': api_key,
-                    'format': 'json',
-                    'field_list': 'image'
-                }
-                
-                response = requests.get(detail_url, params=params, headers=headers, timeout=10)
-                response.raise_for_status()
-                
-                data = response.json()
-                result = data.get('results', {})
-                
-                if result.get('image'):
-                    main_cover_url = result.get('image', {}).get('medium_url', '')
-                    if main_cover_url:
-                        # Generate 3 variant covers using the same image but with different labels
-                        variant_covers = [
-                            {
-                                'size': 'medium',
-                                'url': main_cover_url,
-                                'label': 'Regular Cover'
-                            },
-                            {
-                                'size': 'medium',
-                                'url': main_cover_url,
-                                'label': 'Variant Cover A'
-                            },
-                            {
-                                'size': 'medium',
-                                'url': main_cover_url,
-                                'label': 'Variant Cover B'
-                            },
-                            {
-                                'size': 'medium',
-                                'url': main_cover_url,
-                                'label': 'Variant Cover C'
-                            }
-                        ]
-                        print(f"🔍 Generated {len(variant_covers)} dynamic variant covers for issue {issue_id}")
-            except Exception as e:
-                print(f"⚠️ Could not generate dynamic variants for issue {issue_id}: {e}")
-                # Fallback to web scraping
-                print(f"🔍 Falling back to web scraping for issue {issue_id}...")
-            
-            # Fallback: Generate simple variants using the main cover if we have it
-            if not variant_covers and 'main_cover_url' in locals() and main_cover_url:
-                variant_covers = [
-                    {
-                        'size': 'medium',
-                        'url': main_cover_url,
-                        'label': 'Regular Cover'
-                    },
-                    {
-                        'size': 'medium',
-                        'url': main_cover_url,
-                        'label': 'Variant Cover A'
-                    },
-                    {
-                        'size': 'medium',
-                        'url': main_cover_url,
-                        'label': 'Variant Cover B'
-                    },
-                    {
-                        'size': 'medium',
-                        'url': main_cover_url,
-                        'label': 'Variant Cover C'
-                    }
-                ]
-                print(f"🔍 Generated {len(variant_covers)} fallback variant covers for issue {issue_id}")
-        
-        return variant_covers
-        
-    except Exception as e:
-        print(f"❌ Error fetching web variant covers: {e}")
-        return []
 
 def search_marvel_api(query, api_key, private_key):
     """Search Marvel Comics API."""
@@ -2647,19 +2517,25 @@ def search_api():
         for issue in unique_results:
             result = {
                 'id': issue.get('id'),
+                'comicvine_id': issue.get('comicvine_id'),
                 'title': issue.get('title', issue.get('name', '')),
+                'issue_title': issue.get('issue_title', ''),
+                'series': issue.get('series', ''),
                 'issue_number': issue.get('issue_number', ''),
                 'publisher': issue.get('publisher', ''),
                 'characters': issue.get('characters', ''),
                 'genre': issue.get('genre', 'Superhero'),
                 'release_date': issue.get('release_date', ''),
+                'cover_date': issue.get('cover_date', ''),
                 'description': issue.get('description', ''),
                 'cover_image_url': issue.get('cover_image_url', ''),
-                'cover_images': issue.get('cover_images', []),  # Include cover_images array
+                'cover_images': issue.get('cover_images', []),
                 'volume': issue.get('volume', ''),
+                'volume_start_year': issue.get('volume_start_year', ''),
                 'upc': issue.get('upc', ''),
                 'isbn': issue.get('isbn', ''),
-                'source': issue.get('source', 'Unknown')
+                'source': issue.get('source', 'Unknown'),
+                'has_variants_endpoint': bool(issue.get('has_variants_endpoint')),
             }
             results.append(result)
             
@@ -3003,24 +2879,6 @@ def get_direct_variant_covers(search_term, issue_number=None):
                 return value
     
     return None
-
-def apply_image_transformation(image_url, transformation_type):
-    """
-    Apply a visual transformation to create a variant cover effect.
-    For now, we'll return the original URL but add a transformation parameter.
-    In a full implementation, this would download the image, apply the transformation,
-    and return a new URL or base64 data.
-    """
-    if transformation_type == 'sepia':
-        return f"{image_url}?transform=sepia"
-    elif transformation_type == 'grayscale':
-        return f"{image_url}?transform=grayscale"
-    elif transformation_type == 'vintage':
-        return f"{image_url}?transform=vintage"
-    elif transformation_type == 'color_enhanced':
-        return f"{image_url}?transform=color_enhanced"
-    else:
-        return image_url
 
 @comics_bp.route('/comics/ai-value-lookup', methods=['POST'])
 @login_required

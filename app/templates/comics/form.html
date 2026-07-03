@@ -25,9 +25,12 @@
                         <div class="row">
                             <div class="col-md-8">
                                 <div class="mb-3">
-                                                                         <label for="searchQuery" class="form-label">Search by Title or Barcode</label>
-                                                                         <input type="text" class="form-control" id="searchQuery" 
-                                           placeholder="Enter comic title, character, barcode, or date (e.g., Amazing Spider-Man #1 December 2015)">
+                                                                         <label for="searchQuery" class="form-label">Search by Title, Year, or ComicVine URL</label>
+                                                                         <input type="text" class="form-control" id="searchQuery"
+                                           placeholder="e.g., Star Wars 1977 #1  |  Amazing Spider-Man Vol 2 #15  |  https://comicvine.gamespot.com/.../4000-17616/">
+                                                                         <div class="form-text">
+                                                                             Tip: include a year (e.g. "Star Wars <strong>1977</strong> #1") to disambiguate reprints, or paste a ComicVine URL / <code>4000-NNNNN</code> id for an instant exact match.
+                                                                         </div>
                                 </div>
                             </div>
                             <div class="col-md-4">
@@ -461,17 +464,24 @@ document.addEventListener('DOMContentLoaded', function() {
                         return;
                     }
                     const results = data.results || [];
-                    let coverResult = results.find(r => r.cover_images && r.cover_images.length) ||
-                                      results.find(r => r.cover_image_url);
+                    const coverResult = results.find(r => r.comicvine_id) ||
+                                        results.find(r => r.cover_images && r.cover_images.length) ||
+                                        results.find(r => r.cover_image_url);
 
                     if (!coverResult) {
                         setCoverStatus('No cover images returned from ComicVine for this entry.', 'warning');
                         return;
                     }
 
-                    clearCoverStatus();
-
-                    if (coverResult.cover_images && coverResult.cover_images.length) {
+                    if (coverResult.comicvine_id) {
+                        loadComicVineCoversAndShow(coverResult, {
+                            onLoading: () => setCoverStatus('Loading variant covers from ComicVine...', 'info'),
+                            onSingle: () => { setCoverStatus('Primary cover image fetched and applied.', 'success'); setTimeout(clearCoverStatus, 4000); },
+                            onModal: () => clearCoverStatus(),
+                            onEmpty: () => setCoverStatus('No cover images found on ComicVine for this issue.', 'warning')
+                        });
+                    } else if (coverResult.cover_images && coverResult.cover_images.length) {
+                        clearCoverStatus();
                         showCoverSelectionModal(coverResult.cover_images, coverResult.title || seriesValue || 'Selected Comic');
                     } else if (coverResult.cover_image_url) {
                         fetchCoverImage(coverResult.cover_image_url);
@@ -484,6 +494,37 @@ document.addEventListener('DOMContentLoaded', function() {
                     setCoverStatus(`Cover search failed: ${err.message}`, 'danger');
                 });
         });
+    }
+
+    function loadComicVineCoversAndShow(comic, hooks) {
+        hooks = hooks || {};
+        if (hooks.onLoading) hooks.onLoading();
+        fetch(`/comics/comicvine/issue/${comic.comicvine_id}/covers`)
+            .then(r => r.json())
+            .then(data => {
+                const covers = (data && data.covers) || [];
+                if (covers.length > 1) {
+                    if (hooks.onModal) hooks.onModal();
+                    showCoverSelectionModal(covers, comic.title || comic.series || 'Selected Comic');
+                } else if (covers.length === 1) {
+                    fetchCoverImage(covers[0].url);
+                    if (hooks.onSingle) hooks.onSingle();
+                } else if (comic.cover_image_url) {
+                    fetchCoverImage(comic.cover_image_url);
+                    if (hooks.onSingle) hooks.onSingle();
+                } else if (hooks.onEmpty) {
+                    hooks.onEmpty();
+                }
+            })
+            .catch(err => {
+                console.warn('Could not load ComicVine covers:', err);
+                if (comic.cover_image_url) {
+                    fetchCoverImage(comic.cover_image_url);
+                    if (hooks.onSingle) hooks.onSingle();
+                } else if (hooks.onEmpty) {
+                    hooks.onEmpty();
+                }
+            });
     }
 
     searchBtn.addEventListener('click', function() {
@@ -874,25 +915,15 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
         
-        // Handle cover images
-        console.log('Cover images check:', {
-            cover_images: comic.cover_images,
-            cover_images_length: comic.cover_images ? comic.cover_images.length : 0,
-            cover_image_url: comic.cover_image_url
-        });
-        
+        // Cover handling: prefer lazy ComicVine variant lookup when we have an id.
         if (comic.cover_images && comic.cover_images.length > 0) {
-            console.log('Showing cover selection modal with', comic.cover_images.length, 'covers');
-            // Show cover selection modal for any available covers
             showCoverSelectionModal(comic.cover_images, comic.title);
+        } else if (comic.comicvine_id) {
+            loadComicVineCoversAndShow(comic);
         } else if (comic.cover_image_url) {
-            console.log('Fetching single cover image');
-            // Single cover - fetch directly
             fetchCoverImage(comic.cover_image_url);
-        } else {
-            console.log('No cover images found');
         }
-        
+
         // Hide search results
         searchResults.classList.add('d-none');
         
