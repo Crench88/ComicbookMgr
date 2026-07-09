@@ -2,395 +2,288 @@
 
 {% block title %}My Comics{% endblock %}
 
-{% block extra_css %}
-<style>
-    .comics-table-card:has(.comic-cover-wrapper:hover) .card-body,
-    .comics-table-card:has(.comic-cover-wrapper:hover) .table-responsive,
-    .comics-table-card:has(.comic-cover-wrapper:hover) {
-        overflow: visible !important;
-    }
-    
-    .comics-table-card {
-        position: relative;
-        z-index: 1;
-    }
-    
-    .comics-table-card:has(.comic-cover-wrapper:hover) {
-        z-index: 10;
-    }
-    
-    .comic-cover-wrapper {
-        position: relative;
-        display: inline-block;
-        z-index: 1;
-    }
-    
-    .comic-cover-img {
-        transition: transform 0.3s ease;
-        transform-origin: left center;
-        position: relative;
-        z-index: 2;
-        cursor: pointer;
-    }
-    
-    .comic-cover-wrapper:hover {
-        overflow: visible;
-        z-index: 10;
-    }
-    
-    .comic-cover-wrapper:hover .comic-cover-img {
-        transform: scale(8);
-    }
-    
-    table {
-        position: relative;
-        z-index: 1;
-    }
-    
-    tr {
-        position: relative;
-        z-index: 1;
-    }
-    
-    tr:hover {
-        z-index: 10;
-    }
-</style>
-{% endblock %}
-
 {% block content %}
-<!-- Header -->
-<div class="row mb-4">
-    <div class="col-md-8">
+<div class="page-header d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3">
+    <div>
         <h1 class="h2">My Comics</h1>
-        <p class="text-muted">Manage your comic book collection ({{ comics.total }} comics)</p>
+        <p class="page-subtitle">Browse and manage your collection</p>
     </div>
-    <div class="col-md-4 text-md-end">
+    <div class="page-actions">
         <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
-            <i class="bi bi-plus-circle"></i> Add Comic
+            <i class="bi bi-plus-circle me-1"></i> Add Comic
         </a>
         <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success">
-            <i class="bi bi-download"></i> Export
+            <i class="bi bi-download me-1"></i> Export
         </a>
     </div>
 </div>
 
-<!-- Search and Filter Form -->
-<div class="card mb-4">
-    <div class="card-body">
-        <form method="GET" action="{{ url_for('comics.index') }}" class="row g-3">
-            <div class="col-md-3">
-                <label for="search" class="form-label">Search</label>
-                <input type="text" class="form-control" id="search" name="search" 
-                       value="{{ search_query }}" placeholder="Search by title, character, or publisher...">
-            </div>
-            <div class="col-md-2">
-                <label for="publisher" class="form-label">Publisher</label>
-                <select class="form-select" id="publisher" name="publisher">
-                    <option value="">All Publishers</option>
-                    {% for publisher in publishers %}
-                    <option value="{{ publisher }}" {% if publisher == publisher_filter %}selected{% endif %}>
-                        {{ publisher }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-2">
-                <label for="condition" class="form-label">Condition</label>
-                <select class="form-select" id="condition" name="condition">
-                    <option value="">All Conditions</option>
-                    <option value="Mint" {% if condition_filter == 'Mint' %}selected{% endif %}>Mint</option>
-                    <option value="Near Mint" {% if condition_filter == 'Near Mint' %}selected{% endif %}>Near Mint</option>
-                    <option value="Very Fine" {% if condition_filter == 'Very Fine' %}selected{% endif %}>Very Fine</option>
-                    <option value="Fine" {% if condition_filter == 'Fine' %}selected{% endif %}>Fine</option>
-                    <option value="Very Good" {% if condition_filter == 'Very Good' %}selected{% endif %}>Very Good</option>
-                    <option value="Good" {% if condition_filter == 'Good' %}selected{% endif %}>Good</option>
-                    <option value="Fair" {% if condition_filter == 'Fair' %}selected{% endif %}>Fair</option>
-                    <option value="Poor" {% if condition_filter == 'Poor' %}selected{% endif %}>Poor</option>
-                </select>
-            </div>
-            <div class="col-md-2">
-                <label for="genre" class="form-label">Genre</label>
-                <input type="text" class="form-control" id="genre" name="genre" 
-                       value="{{ genre_filter }}" placeholder="Genre...">
-            </div>
-            <div class="col-md-2">
-                <label for="sort" class="form-label">Sort By</label>
-                <select class="form-select" id="sort" name="sort">
-                    <option value="title" {% if sort_by == 'title' %}selected{% endif %}>Title</option>
-                    <option value="publisher" {% if sort_by == 'publisher' %}selected{% endif %}>Publisher</option>
-                    <option value="condition" {% if sort_by == 'condition' %}selected{% endif %}>Condition</option>
-                    <option value="estimated_value" {% if sort_by == 'estimated_value' %}selected{% endif %}>Value</option>
-                    <option value="date_added" {% if sort_by == 'date_added' %}selected{% endif %}>Date Added</option>
-                </select>
-            </div>
-            <div class="col-md-1">
-                <label class="form-label">&nbsp;</label>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="wishlist" name="wishlist" 
-                           value="1" {% if wishlist_only %}checked{% endif %}>
-                    <label class="form-check-label" for="wishlist">
-                        Wishlist
-                    </label>
+<div class="collection-sticky-bar">
+    <div class="collection-summary">
+        <div>
+            <span class="summary-badge">
+                <i class="bi bi-collection"></i>
+                {{ comics.total }} comic{{ 's' if comics.total != 1 else '' }}
+            </span>
+            {% if series_pagination %}
+            <span class="summary-badge ms-2">
+                <i class="bi bi-journals"></i>
+                {{ series_pagination.total }} series
+            </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="filter-panel">
+        <form method="GET" action="{{ url_for('comics.index') }}" id="collectionFilterForm">
+            <div class="row g-3">
+                <div class="col-md-4 col-lg-3">
+                    <label for="search" class="form-label">Search</label>
+                    <input type="text" class="form-control" id="search" name="search"
+                           value="{{ search_query }}" placeholder="Title, series, character…">
+                </div>
+                <div class="col-md-4 col-lg-2">
+                    <label for="publisher" class="form-label">Publisher</label>
+                    <select class="form-select" id="publisher" name="publisher">
+                        <option value="">All Publishers</option>
+                        {% for publisher in publishers %}
+                        <option value="{{ publisher }}" {% if publisher == publisher_filter %}selected{% endif %}>
+                            {{ publisher }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-2">
+                    <label for="condition" class="form-label">Condition</label>
+                    <select class="form-select" id="condition" name="condition">
+                        <option value="">All Conditions</option>
+                        {% for cond in ['Mint', 'Near Mint', 'Very Fine', 'Fine', 'Very Good', 'Good', 'Fair', 'Poor'] %}
+                        <option value="{{ cond }}" {% if condition_filter == cond %}selected{% endif %}>{{ cond }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-2">
+                    <label for="genre" class="form-label">Genre</label>
+                    <input type="text" class="form-control" id="genre" name="genre"
+                           value="{{ genre_filter }}" placeholder="Genre…">
+                </div>
+                <div class="col-md-4 col-lg-2">
+                    <label for="sort" class="form-label">Sort By</label>
+                    <select class="form-select" id="sort" name="sort">
+                        <option value="title" {% if sort_by == 'title' %}selected{% endif %}>Title</option>
+                        <option value="publisher" {% if sort_by == 'publisher' %}selected{% endif %}>Publisher</option>
+                        <option value="condition" {% if sort_by == 'condition' %}selected{% endif %}>Condition</option>
+                        <option value="estimated_value" {% if sort_by == 'estimated_value' %}selected{% endif %}>Value</option>
+                        <option value="date_added" {% if sort_by == 'date_added' %}selected{% endif %}>Date Added</option>
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-1 d-flex align-items-end">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="wishlist" name="wishlist"
+                               value="1" {% if wishlist_only %}checked{% endif %}>
+                        <label class="form-check-label" for="wishlist">Wishlist</label>
+                    </div>
                 </div>
             </div>
-            <div class="col-12">
+            <div class="filter-actions">
                 <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-search"></i> Search
+                    <i class="bi bi-search me-1"></i> Search
                 </button>
                 <a href="{{ url_for('comics.index') }}" class="btn btn-outline-secondary">
-                    <i class="bi bi-arrow-clockwise"></i> Clear
+                    <i class="bi bi-arrow-clockwise me-1"></i> Clear
                 </a>
             </div>
         </form>
     </div>
 </div>
 
- <!-- Comics Grouped by Series -->
- {% if comics_by_series %}
-    {% for series_name in sorted_series %}
-    {% set collapse_id = 'series-' ~ loop.index %}
-     <div class="card mb-4 comics-table-card">
-        <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between">
-            <h5 class="mb-0">
-                <i class="bi bi-collection"></i> {{ series_name }}
-                <span class="badge bg-light text-dark ms-2">{{ comics_by_series[series_name]|length }} issue{{ 's' if comics_by_series[series_name]|length != 1 else '' }}</span>
-            </h5>
-            <button class="btn btn-sm btn-light text-primary series-toggle" type="button"
-                    data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}"
-                    aria-expanded="true" aria-controls="{{ collapse_id }}">
-                <i class="bi bi-chevron-down"></i>
-            </button>
-         </div>
-        <div id="{{ collapse_id }}" class="collapse series-collapse">
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                     <thead class="table-light">
-                         <tr>
-                             <th style="width: 60px;">Cover</th>
-                             <th>Title & Issue</th>
-                             <th>Publisher</th>
-                             <th>Characters</th>
-                             <th>Condition</th>
-                             <th>Value</th>
-                             <th>Status</th>
-                             <th style="width: 150px;">Actions</th>
-                         </tr>
-                     </thead>
-                     <tbody>
-                         {% for comic in comics_by_series[series_name] %}
-                        <tr>
-                            <td>
-                                {% if comic.has_cover_image() %}
-                                <div class="comic-cover-wrapper">
-                                    <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
-                                         class="img-thumbnail comic-cover-img" alt="{{ comic.title }}" 
-                                         style="width: 50px; height: 70px; object-fit: cover;">
-                                </div>
-                                {% else %}
-                                <div class="bg-light d-flex align-items-center justify-content-center" 
-                                     style="width: 50px; height: 70px;">
-                                    <i class="bi bi-image text-muted"></i>
-                                </div>
-                                {% endif %}
-                            </td>
-                             <td>
-                                {% if comic.title %}
-                                <div class="fw-bold">#{{ comic.issue_number }} {{ comic.title }}</div>
-                                {% else %}
-                                <div class="fw-bold">#{{ comic.issue_number }}</div>
-                                {% endif %}
-                                {% if comic.release_date %}
-                                <small class="text-muted">{{ comic.release_date.strftime('%Y-%m-%d') if comic.release_date else '' }}</small>
-                                {% endif %}
-                                {% if comic.duplicate_total and comic.duplicate_total > 1 %}
-                                <div>
-                                    <span class="badge bg-warning text-dark mt-1">Copy {{ comic.duplicate_index }} of {{ comic.duplicate_total }}</span>
-                                </div>
-                                {% endif %}
-                             </td>
-                             <td>
-                                 <span class="text-muted">{{ comic.publisher or 'Unknown' }}</span>
-                             </td>
-                             <td>
-                                 {% if comic.characters %}
-                                 <small class="text-muted">
-                                     {{ comic.characters[:40] }}{% if comic.characters|length > 40 %}...{% endif %}
-                                 </small>
-                                 {% else %}
-                                 <small class="text-muted">-</small>
-                                 {% endif %}
-                             </td>
-                             <td>
-                                 {% if comic.condition %}
-                                 <span class="badge bg-secondary">{{ comic.condition }}</span>
-                                 {% else %}
-                                 <small class="text-muted">-</small>
-                                 {% endif %}
-                             </td>
-                             <td>
-                                 {% if comic.estimated_value %}
-                                 <span class="badge bg-success">{{ comic.get_formatted_value() }}</span>
-                                 {% else %}
-                                 <small class="text-muted">-</small>
-                                 {% endif %}
-                             </td>
-                             <td>
-                                 {% if comic.is_wishlist %}
-                                 <span class="badge bg-warning text-dark">Wishlist</span>
-                                 {% else %}
-                                 <span class="badge bg-primary">Owned</span>
-                                 {% endif %}
-                             </td>
-                             <td>
-                                 <div class="btn-group btn-group-sm" role="group">
-                                     <a href="{{ url_for('comics.show', id=comic.id) }}" 
-                                        class="btn btn-outline-primary" title="View">
-                                         <i class="bi bi-eye"></i>
-                                     </a>
-                                     <a href="{{ url_for('comics.edit', id=comic.id) }}" 
-                                        class="btn btn-outline-secondary" title="Edit">
-                                         <i class="bi bi-pencil"></i>
-                                     </a>
-                                    <button type="button" class="btn btn-outline-danger" 
-                                            onclick="confirmDelete({{ comic.id }}, {{ comic.title|tojson }})" title="Delete">
-                                         <i class="bi bi-trash"></i>
-                                     </button>
-                                 </div>
-                             </td>
-                         </tr>
-                         {% endfor %}
-                     </tbody>
-                    </table>
-                </div>
-             </div>
-         </div>
-     </div>
-     {% endfor %}
-    
-         <!-- Summary -->
-     <div class="d-flex justify-content-between align-items-center mt-4">
-         <div class="text-muted">
-             Showing {{ comics.total }} comics across {{ sorted_series|length }} series
-         </div>
-     </div>
-    
- {% elif not comics_by_series %}
-     <div class="text-center py-5">
-         <i class="bi bi-collection display-1 text-muted"></i>
-         <h3 class="mt-3">No comics found</h3>
-         <p class="text-muted">
-             {% if search_query or publisher_filter or condition_filter or genre_filter or wishlist_only %}
-                 Try adjusting your search criteria or 
-                 <a href="{{ url_for('comics.index') }}">clear all filters</a>.
-             {% else %}
-                 You haven't added any comics to your collection yet.
-             {% endif %}
-         </p>
-         <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
-             <i class="bi bi-plus-circle"></i> Add Your First Comic
-         </a>
-     </div>
- {% endif %}
+{% if series_rows %}
+<div class="collection-browser" id="collectionBrowser"
+     data-series-issues-url="{{ url_for('comics.series_issues') }}">
+    <aside class="series-sidebar surface-card">
+        <div class="series-sidebar-header">
+            <h2 class="h6 mb-0">Series</h2>
+            <span class="text-muted small">Page {{ series_pagination.page }} of {{ series_pagination.pages }}</span>
+        </div>
+        <ul class="series-list" role="listbox" aria-label="Series list">
+            {% for row in series_rows %}
+            <li>
+                <a href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=row.name, series_page=series_pagination.page, comic_page=1) }}"
+                   class="series-list-item{% if row.name == selected_series %} is-active{% endif %}"
+                   data-series="{{ row.name|e }}"
+                   role="option"
+                   aria-selected="{{ 'true' if row.name == selected_series else 'false' }}">
+                    <span class="series-list-name">{{ row.name }}</span>
+                    <span class="series-list-count">{{ row.count }}</span>
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if series_pagination.pages > 1 %}
+        <nav class="series-pagination" aria-label="Series pages">
+            <ul class="pagination pagination-sm mb-0 justify-content-center">
+                <li class="page-item{% if not series_pagination.has_prev %} disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.prev_num or 1, comic_page=1) }}">
+                        <i class="bi bi-chevron-left"></i>
+                    </a>
+                </li>
+                {% for p in series_pagination.iter_pages() %}
+                <li class="page-item{% if p == series_pagination.page %} active{% endif %}">
+                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=p, comic_page=1) }}">{{ p }}</a>
+                </li>
+                {% endfor %}
+                <li class="page-item{% if not series_pagination.has_next %} disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.next_num or series_pagination.pages, comic_page=1) }}">
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
+    </aside>
 
-<!-- Delete Confirmation Modal -->
-<div class="modal fade" id="deleteModal" tabindex="-1">
+    <section class="series-detail surface-card" id="seriesDetailPanel">
+        <header class="series-detail-header">
+            <div>
+                <h2 class="h5 mb-1" id="seriesDetailTitle">{{ selected_series }}</h2>
+                <p class="text-muted small mb-0" id="seriesDetailMeta">
+                    {{ selected_series_count }} issue{{ 's' if selected_series_count != 1 else '' }}
+                    {% if comics_pagination and comics_pagination.pages > 1 %}
+                    · page {{ comics_pagination.page }} of {{ comics_pagination.pages }}
+                    {% endif %}
+                </p>
+            </div>
+        </header>
+
+        <div class="cover-grid" id="coverGrid">
+            {% for comic in selected_comics %}
+            <article class="cover-card"
+                     data-comic-id="{{ comic.id }}"
+                     data-title="{{ comic.title|e }}"
+                     data-issue="{{ comic.issue_number|e }}"
+                     data-publisher="{{ (comic.publisher or 'Unknown')|e }}"
+                     data-condition="{{ (comic.condition or '')|e }}"
+                     data-value="{{ comic.get_formatted_value() if comic.estimated_value else '' }}"
+                     data-wishlist="{{ 'true' if comic.is_wishlist else 'false' }}"
+                     data-cover-url="{% if comic.has_cover_image() %}{{ url_for('comics.serve_cover_image', id=comic.id) }}{% endif %}">
+                <a href="{{ url_for('comics.show', id=comic.id, next=request.full_path) }}" class="cover-card-link">
+                    <div class="cover-card-image">
+                        {% if comic.has_cover_image() %}
+                        <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}"
+                             alt="#{{ comic.issue_number }}{% if comic.title %} — {{ comic.title }}{% endif %}"
+                             loading="lazy">
+                        {% else %}
+                        <div class="cover-card-placeholder">
+                            <i class="bi bi-image"></i>
+                        </div>
+                        {% endif %}
+                        {% if comic.is_wishlist %}
+                        <span class="cover-card-badge wishlist">Wishlist</span>
+                        {% endif %}
+                        {% if comic.duplicate_total and comic.duplicate_total > 1 %}
+                        <span class="cover-card-badge duplicate">Copy {{ comic.duplicate_index }}/{{ comic.duplicate_total }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="cover-card-caption">
+                        <span class="cover-card-issue">#{{ comic.issue_number }}</span>
+                        {% if comic.title %}
+                        <span class="cover-card-title">{{ comic.title }}</span>
+                        {% endif %}
+                    </div>
+                </a>
+                <div class="cover-card-actions">
+                    <a href="{{ url_for('comics.show', id=comic.id, next=request.full_path) }}" class="btn btn-sm btn-outline-primary" title="View">
+                        <i class="bi bi-eye"></i>
+                    </a>
+                    <a href="{{ url_for('comics.edit', id=comic.id, next=request.full_path) }}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                        <i class="bi bi-pencil"></i>
+                    </a>
+                    <button type="button" class="btn btn-sm btn-outline-danger delete-comic-btn"
+                            data-comic-id="{{ comic.id }}"
+                            data-comic-title="{{ comic.title|e }}"
+                            title="Delete">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+
+        {% if comics_pagination and comics_pagination.pages > 1 %}
+        <nav class="comic-pagination" id="comicPagination" aria-label="Issue pages">
+            <ul class="pagination pagination-sm mb-0 justify-content-center">
+                <li class="page-item{% if not comics_pagination.has_prev %} disabled{% endif %}">
+                    <a class="page-link comic-page-link" data-page="{{ comics_pagination.prev_num or 1 }}"
+                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=comics_pagination.prev_num or 1) }}">
+                        <i class="bi bi-chevron-left"></i>
+                    </a>
+                </li>
+                {% for p in comics_pagination.iter_pages() %}
+                <li class="page-item{% if p == comics_pagination.page %} active{% endif %}">
+                    <a class="page-link comic-page-link" data-page="{{ p }}"
+                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=p) }}">{{ p }}</a>
+                </li>
+                {% endfor %}
+                <li class="page-item{% if not comics_pagination.has_next %} disabled{% endif %}">
+                    <a class="page-link comic-page-link" data-page="{{ comics_pagination.next_num or comics_pagination.pages }}"
+                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=comics_pagination.next_num or comics_pagination.pages) }}">
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
+    </section>
+</div>
+
+{% else %}
+<div class="empty-state surface-card">
+    <i class="bi bi-collection"></i>
+    <h3>No comics found</h3>
+    <p class="text-muted">
+        {% if search_query or publisher_filter or condition_filter or genre_filter or wishlist_only %}
+            Try adjusting your filters or <a href="{{ url_for('comics.index') }}">clear all filters</a>.
+        {% else %}
+            You haven't added any comics to your collection yet.
+        {% endif %}
+    </p>
+    <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle me-1"></i> Add Your First Comic
+    </a>
+</div>
+{% endif %}
+
+<div id="coverPreview" class="cover-preview" aria-hidden="true" hidden>
+    <div class="cover-preview-image">
+        <img src="" alt="">
+    </div>
+    <div class="cover-preview-body">
+        <div class="cover-preview-issue"></div>
+        <div class="cover-preview-title"></div>
+        <div class="cover-preview-meta"></div>
+    </div>
+</div>
+
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Confirm Delete</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <h5 class="modal-title" id="deleteModalLabel">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <p>Are you sure you want to delete "<span id="comicTitle"></span>"?</p>
-                <p class="text-danger">This action cannot be undone.</p>
+                <p class="text-danger small mb-0">This action cannot be undone.</p>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <form id="deleteForm" method="POST" style="display: inline;">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" class="d-inline">
+                    <input type="hidden" name="next" value="">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="btn btn-danger">Delete</button>
                 </form>
             </div>
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-function confirmDelete(comicId, comicTitle) {
-    // Capture the current scroll position as soon as the delete action is requested
-    try {
-        sessionStorage.setItem('comicsScrollPosition', window.scrollY.toString());
-    } catch (e) {
-        console.warn('Unable to persist scroll position:', e);
-    }
-
-    document.getElementById('comicTitle').textContent = comicTitle;
-    document.getElementById('deleteForm').action = '/comics/' + comicId + '/delete';
-    new bootstrap.Modal(document.getElementById('deleteModal')).show();
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    var deleteForm = document.getElementById('deleteForm');
-    if (deleteForm) {
-        deleteForm.addEventListener('submit', function() {
-            try {
-                sessionStorage.setItem('comicsScrollPosition', window.scrollY.toString());
-            } catch (e) {
-                console.warn('Unable to persist scroll position:', e);
-            }
-        });
-    }
-
-    try {
-        var savedPosition = sessionStorage.getItem('comicsScrollPosition');
-        if (savedPosition !== null) {
-            sessionStorage.removeItem('comicsScrollPosition');
-            var y = parseInt(savedPosition, 10);
-            if (!isNaN(y)) {
-                requestAnimationFrame(function() {
-                    window.scrollTo({ top: y, behavior: 'auto' });
-                });
-            }
-        }
-    } catch (e) {
-        console.warn('Unable to restore scroll position:', e);
-    }
-
-    var collapseElements = document.querySelectorAll('.series-collapse');
-    collapseElements.forEach(function(el) {
-        // Initialize button state for collapsed sections
-        var initBtn = document.querySelector('[data-bs-target="#' + el.id + '"]');
-        if (initBtn) {
-            initBtn.setAttribute('aria-expanded', 'false');
-        }
-
-        el.addEventListener('shown.bs.collapse', function() {
-            var btn = document.querySelector('[data-bs-target="#' + el.id + '"]');
-            if (btn) {
-                btn.setAttribute('aria-expanded', 'true');
-                var icon = btn.querySelector('i');
-                if (icon) {
-                    icon.classList.remove('bi-chevron-down');
-                    icon.classList.add('bi-chevron-up');
-                }
-            }
-        });
-
-        el.addEventListener('hidden.bs.collapse', function() {
-            var btn = document.querySelector('[data-bs-target="#' + el.id + '"]');
-            if (btn) {
-                btn.setAttribute('aria-expanded', 'false');
-                var icon = btn.querySelector('i');
-                if (icon) {
-                    icon.classList.remove('bi-chevron-up');
-                    icon.classList.add('bi-chevron-down');
-                }
-            }
-        });
-    });
-});
-</script>
 {% endblock %}

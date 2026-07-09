@@ -2,8 +2,9 @@
 Administrative routes for managing comic metadata such as canonical series lists.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
-from flask_login import login_required, current_user
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app
+from flask_login import current_user
+from .decorators import admin_required
 from sqlalchemy.exc import IntegrityError
 from flask_wtf.csrf import generate_csrf
 import csv
@@ -12,12 +13,17 @@ from io import StringIO
 from . import db
 from .forms import SeriesForm, SeriesIssueForm, SeriesIssueUploadForm
 from .models import Series, SeriesIssue, Comic
+from .services.comicvine import (
+    parse_comicvine_volume_id,
+    fetch_volume_issues_for_import,
+    fetch_volume_detail,
+)
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
 
 @admin_bp.route('/series', methods=['GET', 'POST'])
-@login_required
+@admin_required
 def series_index():
     """View and manage the canonical series list used throughout the app."""
     form = SeriesForm()
@@ -51,7 +57,7 @@ def series_index():
 
 
 @admin_bp.route('/series/<int:series_id>/delete', methods=['POST'])
-@login_required
+@admin_required
 def delete_series(series_id):
     """Remove a series entry."""
     series = Series.query.get_or_404(series_id)
@@ -62,7 +68,7 @@ def delete_series(series_id):
 
 
 @admin_bp.route('/series/issues', methods=['GET', 'POST'])
-@login_required
+@admin_required
 def series_issues():
     """Manage canonical issue data for a series."""
     series_list = Series.query.order_by(Series.name.asc(), Series.volume.asc()).all()
@@ -232,7 +238,7 @@ def series_issues():
 
 
 @admin_bp.route('/series/issues/<int:issue_id>/delete', methods=['POST'])
-@login_required
+@admin_required
 def delete_series_issue(issue_id):
     """Delete a canonical issue record."""
     issue = SeriesIssue.query.get_or_404(issue_id)
@@ -244,7 +250,7 @@ def delete_series_issue(issue_id):
 
 
 @admin_bp.route('/series/<int:series_id>/edit', methods=['GET', 'POST'])
-@login_required
+@admin_required
 def edit_series(series_id):
     """Edit an existing series entry."""
     series = Series.query.get_or_404(series_id)
@@ -266,4 +272,90 @@ def edit_series(series_id):
             flash('Another series already uses that name and volume.', 'warning')
 
     return render_template('admin/edit_series.html', form=form, series=series)
+
+
+@admin_bp.route('/series/<int:series_id>/import-comicvine', methods=['POST'])
+@admin_required
+def import_comicvine_series(series_id):
+    """Import issue metadata from a ComicVine volume into the Series Catalog."""
+    series = Series.query.get_or_404(series_id)
+    api_key = current_app.config.get('COMICVINE_API_KEY', '')
+    if not api_key:
+        flash('ComicVine API key is not configured.', 'danger')
+        return redirect(url_for('admin.series_issues', series_id=series_id))
+
+    volume_ref = (request.form.get('comicvine_volume') or '').strip()
+    volume_id = series.comicvine_volume_id
+    if volume_ref:
+        parsed = parse_comicvine_volume_id(volume_ref)
+        if parsed:
+            volume_id = parsed
+        elif volume_ref.isdigit():
+            volume_id = int(volume_ref)
+
+    if not volume_id:
+        flash('Enter a ComicVine volume ID or URL (e.g. 4050-2914).', 'warning')
+        return redirect(url_for('admin.series_issues', series_id=series_id))
+
+    series.comicvine_volume_id = volume_id
+    vol_meta = fetch_volume_detail(volume_id, api_key)
+    if vol_meta.get('publisher_name') and not series.publisher:
+        series.publisher = vol_meta['publisher_name']
+    if vol_meta.get('start_year') and not series.date_range:
+        series.date_range = vol_meta['start_year']
+
+    imported = updated = 0
+    offset = 0
+    total = None
+    while True:
+        issues, total = fetch_volume_issues_for_import(
+            volume_id, api_key, offset=offset, limit=100,
+        )
+        if not issues:
+            break
+        for item in issues:
+            issue_num = (item.get('issue_number') or '').strip()
+            if not issue_num:
+                continue
+            cv_id = item.get('comicvine_id')
+            existing = SeriesIssue.query.filter_by(
+                series_id=series.id, issue_number=issue_num,
+            ).first()
+            if existing:
+                if cv_id and not existing.comicvine_issue_id:
+                    existing.comicvine_issue_id = cv_id
+                    updated += 1
+                if item.get('writer') and not existing.writer:
+                    existing.writer = item.get('writer')
+                if item.get('artist') and not existing.artist:
+                    existing.artist = item.get('artist')
+                if item.get('story_arc') and not existing.story_arc:
+                    existing.story_arc = item.get('story_arc')
+                if item.get('characters') and not existing.featured_characters:
+                    existing.featured_characters = item.get('characters')
+                continue
+            db.session.add(SeriesIssue(
+                series_id=series.id,
+                issue_number=issue_num,
+                title=item.get('issue_title') or item.get('title'),
+                cover_date=item.get('cover_date') or item.get('release_date'),
+                featured_characters=item.get('characters'),
+                writer=item.get('writer'),
+                artist=item.get('artist'),
+                story_arc=item.get('story_arc'),
+                comicvine_issue_id=cv_id,
+            ))
+            imported += 1
+        offset += len(issues)
+        if total is not None and offset >= total:
+            break
+        if len(issues) < 100:
+            break
+
+    db.session.commit()
+    flash(
+        f'ComicVine import complete: {imported} new issue(s), {updated} link(s) updated.',
+        'success',
+    )
+    return redirect(url_for('admin.series_issues', series_id=series_id))
 

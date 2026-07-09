@@ -19,11 +19,12 @@
             
             <div class="card-body">
                 <div class="d-grid gap-2">
-                    <a href="{{ url_for('comics.edit', id=comic.id) }}" class="btn btn-primary">
+                    <a href="{{ url_for('comics.edit', id=comic.id, next=collection_return_url) }}" class="btn btn-primary">
                         <i class="bi bi-pencil"></i> Edit Comic
                     </a>
-                    <button type="button" class="btn btn-outline-danger" 
-                            onclick="confirmDelete({{ comic.id }}, '{{ comic.title }}')">
+                    <button type="button" class="btn btn-outline-danger delete-comic-btn"
+                            data-comic-id="{{ comic.id }}"
+                            data-comic-title="{{ comic.title|e }}">
                         <i class="bi bi-trash"></i> Delete Comic
                     </button>
                 </div>
@@ -153,6 +154,73 @@
                     </div>
                 </div>
                 {% endif %}
+
+                {% if comic.writer or comic.artist or comic.colorist or comic.letterer or comic.editor or comic.cover_artist %}
+                <div class="mt-4">
+                    <h5>Creative Team</h5>
+                    <dl class="row mb-0">
+                        {% if comic.writer %}
+                        <dt class="col-sm-3">Writer</dt>
+                        <dd class="col-sm-9">{{ comic.writer }}</dd>
+                        {% endif %}
+                        {% if comic.artist %}
+                        <dt class="col-sm-3">Artist</dt>
+                        <dd class="col-sm-9">{{ comic.artist }}</dd>
+                        {% endif %}
+                        {% if comic.colorist %}
+                        <dt class="col-sm-3">Colorist</dt>
+                        <dd class="col-sm-9">{{ comic.colorist }}</dd>
+                        {% endif %}
+                        {% if comic.letterer %}
+                        <dt class="col-sm-3">Letterer</dt>
+                        <dd class="col-sm-9">{{ comic.letterer }}</dd>
+                        {% endif %}
+                        {% if comic.editor %}
+                        <dt class="col-sm-3">Editor</dt>
+                        <dd class="col-sm-9">{{ comic.editor }}</dd>
+                        {% endif %}
+                        {% if comic.cover_artist %}
+                        <dt class="col-sm-3">Cover Artist</dt>
+                        <dd class="col-sm-9">{{ comic.cover_artist }}</dd>
+                        {% endif %}
+                    </dl>
+                </div>
+                {% endif %}
+
+                {% if comic.teams or comic.story_arc %}
+                <div class="mt-4">
+                    <h5>Story Context</h5>
+                    <dl class="row mb-0">
+                        {% if comic.story_arc %}
+                        <dt class="col-sm-3">Story Arc</dt>
+                        <dd class="col-sm-9">{{ comic.story_arc }}</dd>
+                        {% endif %}
+                        {% if comic.teams %}
+                        <dt class="col-sm-3">Teams</dt>
+                        <dd class="col-sm-9">{{ comic.teams }}</dd>
+                        {% endif %}
+                    </dl>
+                </div>
+                {% endif %}
+
+                {% if comic.description %}
+                <div class="mt-4">
+                    <h5>Description</h5>
+                    <div class="card bg-light">
+                        <div class="card-body">
+                            {{ comic.description|nl2br }}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if comic.comicvine_url %}
+                <div class="mt-3">
+                    <a href="{{ comic.comicvine_url }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">
+                        <i class="bi bi-box-arrow-up-right"></i> View on ComicVine
+                    </a>
+                </div>
+                {% endif %}
                 
                 {% if comic.notes %}
                 <div class="mt-4">
@@ -169,7 +237,7 @@
         
         <!-- Navigation -->
         <div class="mt-4">
-            <a href="{{ url_for('comics.index') }}" class="btn btn-outline-secondary">
+            <a href="{{ collection_return_url }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left"></i> Back to Collection
             </a>
             <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-primary">
@@ -194,6 +262,8 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <form id="deleteForm" method="POST" style="display: inline;">
+                    <input type="hidden" name="next" value="">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="btn btn-danger">Delete</button>
                 </form>
             </div>
@@ -204,12 +274,6 @@
 
 {% block extra_js %}
 <script>
-function confirmDelete(comicId, comicTitle) {
-    document.getElementById('comicTitle').textContent = comicTitle;
-    document.getElementById('deleteForm').action = '/comics/' + comicId + '/delete';
-    new bootstrap.Modal(document.getElementById('deleteModal')).show();
-}
-
 function switchPrimaryCover(blobData, label) {
     if (confirm(`Set "${label}" as the primary cover image?`)) {
         // Create a form to submit the change

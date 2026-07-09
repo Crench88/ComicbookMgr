@@ -4,6 +4,63 @@
 
 {% block content %}
 {% set series_options = series_options if series_options is defined else [] %}
+{% macro series_volume_picker() %}
+                        <div id="volumePicker" class="volume-picker border rounded p-3 mb-3">
+                            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                <div>
+                                    <h6 class="mb-1"><i class="bi bi-journals"></i> Choose Series Volume</h6>
+                                    <p class="text-muted small mb-0">
+                                        Many series have multiple volumes across different years (e.g. Batman 1940, Batman 2011).
+                                        Browse volumes first, then search for a specific issue within that run.
+                                        ComicVine results default to major North American publishers (Marvel, DC, Image, etc.).
+                                    </p>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="clearVolumeBtn">
+                                    Clear
+                                </button>
+                            </div>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-4">
+                                    <label for="volumeSeriesQuery" class="form-label">Series Name</label>
+                                    <input type="text" class="form-control" id="volumeSeriesQuery"
+                                           placeholder="e.g. Amazing Spider-Man, Batman" list="seriesOptions">
+                                </div>
+                                <div class="col-md-2">
+                                    <label for="volumeYearFilter" class="form-label">Start Year</label>
+                                    <input type="number" class="form-control" id="volumeYearFilter"
+                                           placeholder="e.g. 1963" min="1900" max="2099">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="volumePublisherFilter" class="form-label">Publisher</label>
+                                    <input type="text" class="form-control" id="volumePublisherFilter"
+                                           placeholder="e.g. Marvel, DC Comics">
+                                </div>
+                                <div class="col-md-3">
+                                    <button type="button" class="btn btn-outline-primary w-100" id="browseVolumesBtn">
+                                        <i class="bi bi-list-ul"></i> Browse Volumes
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" id="naPublishersOnly" checked>
+                                <label class="form-check-label small" for="naPublishersOnly">
+                                    North American publishers only (excludes Panini, foreign editions, etc.)
+                                </label>
+                            </div>
+                            <div id="selectedVolumeChip" class="alert alert-success py-2 px-3 mt-3 mb-0 d-none"></div>
+                            <div id="volumeListPanel" class="d-none mt-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span class="small text-muted" id="volumeListMeta"></span>
+                                </div>
+                                <div id="volumeList" class="list-group volume-list"></div>
+                            </div>
+                            <div id="volumeBrowseError" class="alert alert-warning mt-3 mb-0 d-none"></div>
+                            <div id="volumeBrowseLoading" class="text-center py-3 d-none">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                                <span class="ms-2">Loading volumes...</span>
+                            </div>
+                        </div>
+{% endmacro %}
 <div class="row justify-content-center">
     <div class="col-lg-8">
         <div class="card shadow">
@@ -12,16 +69,48 @@
                     <i class="bi bi-{{ 'plus-circle' if not comic else 'pencil' }}"></i> 
                     {{ title }}
                 </h3>
+                {% if not comic %}
+                <ul class="nav nav-tabs card-header-tabs mt-3" id="addModeTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="single-tab" data-bs-toggle="tab"
+                                data-bs-target="#singleAddPanel" type="button" role="tab"
+                                aria-controls="singleAddPanel" aria-selected="true">
+                            <i class="bi bi-book"></i> Single Comic
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="bulk-tab" data-bs-toggle="tab"
+                                data-bs-target="#bulkAddPanel" type="button" role="tab"
+                                aria-controls="bulkAddPanel" aria-selected="false">
+                            <i class="bi bi-collection"></i> Bulk Add
+                        </button>
+                    </li>
+                </ul>
+                {% endif %}
             </div>
             <div class="card-body">
+                {% if not comic %}
+                {{ series_volume_picker() }}
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="singleAddPanel" role="tabpanel" aria-labelledby="single-tab">
+                {% endif %}
                 <!-- Comic Search Section -->
                 <div class="card mb-4 border-primary">
-                    <div class="card-header bg-primary text-white">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center gap-2 flex-wrap">
                         <h5 class="mb-0">
                             <i class="bi bi-search"></i> Search for Comic Information
                         </h5>
+                        {% if comic %}
+                        <button type="button" class="btn btn-sm btn-light" id="refreshComicVineBtn"
+                                data-comic-id="{{ comic.id }}">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh from ComicVine
+                        </button>
+                        {% endif %}
                     </div>
                     <div class="card-body">
+                        {% if comic %}
+                        <div id="refreshComicVineStatus" class="alert d-none mb-3" role="alert"></div>
+                        {% endif %}
                         <div class="row">
                             <div class="col-md-8">
                                 <div class="mb-3">
@@ -43,6 +132,10 @@
                             </div>
                         </div>
                         
+                        {% if comic %}
+                        {{ series_volume_picker() }}
+                        {% endif %}
+
                         <!-- API Selection Checkboxes -->
                         <div class="row">
                             <div class="col-12">
@@ -206,6 +299,84 @@
                         {% endif %}
                         <div class="form-text">Separate multiple characters with commas</div>
                     </div>
+
+                    <div class="card mb-3 border-secondary">
+                        <div class="card-header py-2">
+                            <h6 class="mb-0"><i class="bi bi-people"></i> Creative Team & Story Details</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        {{ form.writer.label(class="form-label") }}
+                                        {{ form.writer(class="form-control" + (" is-invalid" if form.writer.errors else ""), rows=2, id="comicWriter") }}
+                                        {% if form.writer.errors %}
+                                            <div class="invalid-feedback">
+                                                {% for error in form.writer.errors %}{{ error }}{% endfor %}
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        {{ form.artist.label(class="form-label") }}
+                                        {{ form.artist(class="form-control" + (" is-invalid" if form.artist.errors else ""), rows=2, id="comicArtist") }}
+                                        {% if form.artist.errors %}
+                                            <div class="invalid-feedback">
+                                                {% for error in form.artist.errors %}{{ error }}{% endfor %}
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        {{ form.colorist.label(class="form-label") }}
+                                        {{ form.colorist(class="form-control" + (" is-invalid" if form.colorist.errors else ""), id="comicColorist") }}
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        {{ form.letterer.label(class="form-label") }}
+                                        {{ form.letterer(class="form-control" + (" is-invalid" if form.letterer.errors else ""), id="comicLetterer") }}
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        {{ form.editor.label(class="form-label") }}
+                                        {{ form.editor(class="form-control" + (" is-invalid" if form.editor.errors else ""), id="comicEditor") }}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        {{ form.cover_artist.label(class="form-label") }}
+                                        {{ form.cover_artist(class="form-control" + (" is-invalid" if form.cover_artist.errors else ""), id="comicCoverArtist") }}
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        {{ form.story_arc.label(class="form-label") }}
+                                        {{ form.story_arc(class="form-control" + (" is-invalid" if form.story_arc.errors else ""), id="comicStoryArc") }}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                {{ form.teams.label(class="form-label") }}
+                                {{ form.teams(class="form-control" + (" is-invalid" if form.teams.errors else ""), rows=2, id="comicTeams") }}
+                            </div>
+                            <div class="mb-0">
+                                {{ form.description.label(class="form-label") }}
+                                {{ form.description(class="form-control" + (" is-invalid" if form.description.errors else ""), rows=3, id="comicDescription") }}
+                                <div class="form-text">Synopsis from ComicVine (deck/description).</div>
+                            </div>
+                        </div>
+                    </div>
+                    {{ form.comicvine_issue_id(id="comicvineIssueId") }}
+                    <input type="hidden" name="comicvine_url" id="comicvineUrl"
+                           value="{{ comic.comicvine_url if comic and comic.comicvine_url else '' }}">
                     
                     <!-- UPC and ISBN -->
                     <div class="row">
@@ -304,17 +475,18 @@
                         {% endif %}
                         <div class="form-text">Upload a cover image (JPG, PNG, GIF - max 16MB)</div>
                         <button type="button" class="btn btn-outline-primary mt-2" id="fetchCoverBtn">
-                            <i class="bi bi-image"></i> Find Cover via ComicVine
+                            <i class="bi bi-images"></i> Add Covers from ComicVine
                         </button>
                         <div id="coverSearchStatus" class="d-none mt-2"></div>
-                        
-                        {% if comic and comic.has_cover_image() %}
-                        <div class="mt-2">
-                            <small class="text-muted">Current cover image:</small>
-                            <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
-                                 alt="Current cover" class="img-thumbnail" style="max-height: 100px;">
+                        <div id="fetchedCoverPreview" class="mt-2"></div>
+
+                        <div id="storedCoversSection" class="stored-covers-section mt-3 d-none">
+                            <h6 class="mb-1"><i class="bi bi-images"></i> Cover Variants</h6>
+                            <p class="text-muted small mb-2">
+                                All stored covers for this issue. Click <strong>Set as Primary</strong> to change the main cover, then save the comic.
+                            </p>
+                            <div id="storedCoversGallery" class="stored-covers-gallery"></div>
                         </div>
-                        {% endif %}
                     </div>
                     
                     <!-- Notes -->
@@ -340,12 +512,12 @@
                     
                     <!-- Submit Buttons -->
                     <div class="d-flex justify-content-between">
-                        <a href="{{ url_for('comics.index') }}" class="btn btn-secondary">
+                        <a href="{{ collection_return_url if comic else url_for('comics.index') }}" class="btn btn-secondary">
                             <i class="bi bi-arrow-left"></i> Cancel
                         </a>
                         <div>
                             {% if comic %}
-                            <a href="{{ url_for('comics.show', id=comic.id) }}" class="btn btn-outline-primary me-2">
+                            <a href="{{ url_for('comics.show', id=comic.id, next=collection_return_url) }}" class="btn btn-outline-primary me-2">
                                 <i class="bi bi-eye"></i> View
                             </a>
                             {% endif %}
@@ -353,6 +525,115 @@
                         </div>
                     </div>
                 </form>
+                {% if not comic %}
+                    </div><!-- /singleAddPanel -->
+
+                    <div class="tab-pane fade" id="bulkAddPanel" role="tabpanel" aria-labelledby="bulk-tab">
+                        <div class="card border-success mb-0">
+                            <div class="card-header bg-success text-white">
+                                <h5 class="mb-0"><i class="bi bi-collection"></i> Bulk Add by Issue Range</h5>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted">
+                                    Add many issues from one series at once. ComicVine is queried for each issue;
+                                    metadata and primary cover images are saved automatically.
+                                    Use <strong>Choose Series Volume</strong> above to pick the right run by year first.
+                                </p>
+
+                                <div class="row g-3">
+                                    <div class="col-md-8">
+                                        <label for="bulkSeries" class="form-label">Series Name</label>
+                                        <input type="text" class="form-control" id="bulkSeries"
+                                               placeholder="e.g., ROM" list="seriesOptions">
+                                        <div class="form-text">Must match the ComicVine series name.</div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="bulkStartYear" class="form-label">Start Year (optional)</label>
+                                        <input type="number" class="form-control" id="bulkStartYear"
+                                               placeholder="e.g., 1979" min="1900" max="2099">
+                                        <div class="form-text">Helps pick the right volume.</div>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-8">
+                                        <label for="bulkIssueRanges" class="form-label">Issue Ranges</label>
+                                        <input type="text" class="form-control" id="bulkIssueRanges"
+                                               placeholder="e.g., 1-32  or  1-14, 16-22, 24-32">
+                                        <div class="form-text">
+                                            Use commas for gaps. Examples: <code>1-32</code>,
+                                            <code>1-14, 16-22, 24-32</code>, or <code>1, 3, 5-8</code>.
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="bulkCondition" class="form-label">Default Condition</label>
+                                        <select class="form-select" id="bulkCondition">
+                                            <option value="">None</option>
+                                            <option value="Mint">Mint</option>
+                                            <option value="Near Mint">Near Mint</option>
+                                            <option value="Very Fine">Very Fine</option>
+                                            <option value="Fine">Fine</option>
+                                            <option value="Very Good">Very Good</option>
+                                            <option value="Good">Good</option>
+                                            <option value="Fair">Fair</option>
+                                            <option value="Poor">Poor</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-4">
+                                        <label for="bulkVolumeHint" class="form-label">Volume (optional)</label>
+                                        <input type="text" class="form-control" id="bulkVolumeHint"
+                                               placeholder="e.g., 1">
+                                    </div>
+                                    <div class="col-md-8 d-flex align-items-end">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="bulkSkipExisting" checked>
+                                            <label class="form-check-label" for="bulkSkipExisting">
+                                                Skip issues already in my collection
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="bulkPreview" class="alert alert-info mt-3 d-none"></div>
+                                <div id="bulkError" class="alert alert-danger mt-3 d-none"></div>
+
+                                <div id="bulkProgress" class="d-none mt-3">
+                                    <div class="d-flex justify-content-between mb-1">
+                                        <span id="bulkProgressLabel">Adding comics...</span>
+                                        <span id="bulkProgressCount">0 / 0</span>
+                                    </div>
+                                    <div class="progress" role="progressbar" aria-label="Bulk add progress">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                             id="bulkProgressBar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+
+                                <div id="bulkResults" class="d-none mt-3">
+                                    <h6>Results</h6>
+                                    <ul class="list-group list-group-flush small" id="bulkResultsList"></ul>
+                                </div>
+
+                                <div class="d-flex justify-content-between mt-4">
+                                    <a href="{{ url_for('comics.index') }}" class="btn btn-secondary">
+                                        <i class="bi bi-arrow-left"></i> Cancel
+                                    </a>
+                                    <div>
+                                        <button type="button" class="btn btn-outline-success me-2" id="bulkPreviewBtn">
+                                            <i class="bi bi-eye"></i> Preview
+                                        </button>
+                                        <button type="button" class="btn btn-success" id="bulkAddBtn">
+                                            <i class="bi bi-cloud-download"></i> Add All
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div><!-- /bulkAddPanel -->
+                </div><!-- /tab-content -->
+                {% endif %}
             </div>
         </div>
     </div>
@@ -401,9 +682,225 @@ document.addEventListener('DOMContentLoaded', function() {
     const publisherField = document.getElementById('comicPublisher');
     const genreField = document.getElementById('comicGenre');
     const charactersField = document.getElementById('comicCharacters');
+    const writerField = document.getElementById('comicWriter');
+    const artistField = document.getElementById('comicArtist');
+    const coloristField = document.getElementById('comicColorist');
+    const lettererField = document.getElementById('comicLetterer');
+    const editorField = document.getElementById('comicEditor');
+    const coverArtistField = document.getElementById('comicCoverArtist');
+    const storyArcField = document.getElementById('comicStoryArc');
+    const teamsField = document.getElementById('comicTeams');
+    const descriptionField = document.getElementById('comicDescription');
+    const comicvineIssueIdField = document.getElementById('comicvineIssueId');
+    const comicvineUrlField = document.getElementById('comicvineUrl');
     const upcField = document.getElementById('comicUPC');
     const isbnField = document.getElementById('comicISBN');
     const releaseDateField = document.getElementById('comicReleaseDate');
+
+    const browseVolumesBtn = document.getElementById('browseVolumesBtn');
+    const volumeSeriesQuery = document.getElementById('volumeSeriesQuery');
+    const volumeYearFilter = document.getElementById('volumeYearFilter');
+    const volumePublisherFilter = document.getElementById('volumePublisherFilter');
+    const naPublishersOnly = document.getElementById('naPublishersOnly');
+    const volumeListPanel = document.getElementById('volumeListPanel');
+    const volumeList = document.getElementById('volumeList');
+    const volumeListMeta = document.getElementById('volumeListMeta');
+    const volumeBrowseError = document.getElementById('volumeBrowseError');
+    const volumeBrowseLoading = document.getElementById('volumeBrowseLoading');
+    const selectedVolumeChip = document.getElementById('selectedVolumeChip');
+    const clearVolumeBtn = document.getElementById('clearVolumeBtn');
+    const searchComicVineToggle = document.getElementById('searchComicVine');
+
+    let selectedVolume = null;
+
+    function escapeVolumeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function showVolumeBrowseError(message) {
+        if (!volumeBrowseError) return;
+        volumeBrowseError.textContent = message;
+        volumeBrowseError.classList.remove('d-none');
+    }
+
+    function clearVolumeBrowseError() {
+        if (volumeBrowseError) {
+            volumeBrowseError.classList.add('d-none');
+            volumeBrowseError.textContent = '';
+        }
+    }
+
+    function renderSelectedVolumeChip() {
+        if (!selectedVolumeChip || !clearVolumeBtn) return;
+        if (!selectedVolume) {
+            selectedVolumeChip.classList.add('d-none');
+            clearVolumeBtn.classList.add('d-none');
+            return;
+        }
+        const vol = selectedVolume;
+        const bits = [
+            `<strong>${escapeVolumeHtml(vol.display_name || vol.name)}</strong>`,
+            vol.publisher ? escapeVolumeHtml(vol.publisher) : '',
+            vol.start_year ? `Started ${escapeVolumeHtml(vol.start_year)}` : '',
+            vol.date_range_label ? escapeVolumeHtml(vol.date_range_label) : '',
+            vol.source ? `<span class="badge bg-secondary">${escapeVolumeHtml(vol.source)}</span>` : '',
+        ].filter(Boolean);
+        selectedVolumeChip.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div><i class="bi bi-check-circle"></i> Selected volume: ${bits.join(' · ')}</div>
+            </div>
+            <div class="small text-muted mt-1">Issue searches and bulk add are limited to this volume.</div>
+        `;
+        selectedVolumeChip.classList.remove('d-none');
+        clearVolumeBtn.classList.remove('d-none');
+    }
+
+    function selectVolume(volume) {
+        selectedVolume = volume;
+        const seriesName = volume.display_name || volume.name || '';
+        if (localSeriesInput) localSeriesInput.value = seriesName;
+        if (seriesField) seriesField.value = volume.name || seriesName;
+        if (publisherField && volume.publisher) publisherField.value = volume.publisher;
+        const bulkSeries = document.getElementById('bulkSeries');
+        const bulkStartYear = document.getElementById('bulkStartYear');
+        const bulkVolumeHint = document.getElementById('bulkVolumeHint');
+        if (bulkSeries) bulkSeries.value = volume.name || seriesName;
+        if (bulkStartYear && volume.start_year) bulkStartYear.value = volume.start_year;
+        if (bulkVolumeHint && volume.volume_number) bulkVolumeHint.value = volume.volume_number;
+        if (volumeList) {
+            volumeList.querySelectorAll('.volume-list-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.volumeKey === volumePickerKey(volume));
+            });
+        }
+        renderSelectedVolumeChip();
+    }
+
+    function clearSelectedVolume() {
+        selectedVolume = null;
+        if (volumeList) {
+            volumeList.querySelectorAll('.volume-list-item').forEach(item => item.classList.remove('active'));
+        }
+        renderSelectedVolumeChip();
+    }
+
+    function volumePickerKey(volume) {
+        if (volume.local_series_id) return `local:${volume.local_series_id}`;
+        return `cv:${volume.comicvine_volume_id}`;
+    }
+
+    function renderVolumeList(volumes) {
+        if (!volumeList || !volumeListPanel || !volumeListMeta) return;
+        volumeList.innerHTML = '';
+        volumeListMeta.textContent = `${volumes.length} volume${volumes.length === 1 ? '' : 's'} found — sorted by start year`;
+        volumes.forEach(volume => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action volume-list-item';
+            item.dataset.volumeKey = volumePickerKey(volume);
+            const yearLabel = volume.start_year || 'Year unknown';
+            const issueLabel = volume.count_of_issues
+                ? `${volume.count_of_issues} issues`
+                : (volume.date_range_label || '');
+            const volNum = volume.volume_number ? `Vol. ${volume.volume_number}` : '';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                        <div class="fw-semibold">${escapeVolumeHtml(volume.display_name || volume.name)}</div>
+                        <div class="small text-muted">
+                            ${escapeVolumeHtml(volume.publisher || 'Unknown publisher')}
+                            ${volNum ? ` · ${escapeVolumeHtml(volNum)}` : ''}
+                        </div>
+                        <div class="small">
+                            <span class="badge bg-warning text-dark">${escapeVolumeHtml(yearLabel)}</span>
+                            ${issueLabel ? `<span class="ms-1">${escapeVolumeHtml(issueLabel)}</span>` : ''}
+                            <span class="badge bg-secondary ms-1">${escapeVolumeHtml(volume.source || '')}</span>
+                        </div>
+                    </div>
+                    <span class="btn btn-sm btn-outline-primary">Select</span>
+                </div>
+            `;
+            item.addEventListener('click', () => selectVolume(volume));
+            volumeList.appendChild(item);
+        });
+        volumeListPanel.classList.remove('d-none');
+    }
+
+    function appendNaPublisherParam(params) {
+        if (naPublishersOnly && !naPublishersOnly.checked) {
+            params.set('na_publishers_only', '0');
+        }
+    }
+
+    function browseVolumes() {
+        if (!volumeSeriesQuery) return;
+        const series = volumeSeriesQuery.value.trim()
+            || (searchQuery ? searchQuery.value.trim().replace(/#?\s*\d+.*$/, '').trim() : '')
+            || (localSeriesInput ? localSeriesInput.value.trim() : '');
+        if (!series) {
+            showVolumeBrowseError('Enter a series name to browse volumes.');
+            return;
+        }
+
+        clearVolumeBrowseError();
+        if (volumeBrowseLoading) volumeBrowseLoading.classList.remove('d-none');
+        if (volumeListPanel) volumeListPanel.classList.add('d-none');
+        if (browseVolumesBtn) browseVolumesBtn.disabled = true;
+
+        const params = new URLSearchParams({ series });
+        if (volumeYearFilter && volumeYearFilter.value.trim()) {
+            params.set('year', volumeYearFilter.value.trim());
+        }
+        const publisher = (volumePublisherFilter && volumePublisherFilter.value.trim())
+            || (publisherField && publisherField.value.trim());
+        if (publisher) params.set('publisher', publisher);
+        if (searchComicVineToggle) params.set('comicvine', searchComicVineToggle.checked ? '1' : '0');
+        if (searchLocalToggle) params.set('local', searchLocalToggle.checked ? '1' : '0');
+        appendNaPublisherParam(params);
+
+        fetch(`/comics/volumes/lookup?${params.toString()}`)
+            .then(resp => resp.json().then(data => ({ ok: resp.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok) {
+                    showVolumeBrowseError(data.error || 'Could not load volumes.');
+                    return;
+                }
+                renderVolumeList(data.volumes || []);
+            })
+            .catch(err => showVolumeBrowseError(`Volume browse failed: ${err.message}`))
+            .finally(() => {
+                if (volumeBrowseLoading) volumeBrowseLoading.classList.add('d-none');
+                if (browseVolumesBtn) browseVolumesBtn.disabled = false;
+            });
+    }
+
+    if (browseVolumesBtn) browseVolumesBtn.addEventListener('click', browseVolumes);
+    if (clearVolumeBtn) clearVolumeBtn.addEventListener('click', clearSelectedVolume);
+    if (volumeSeriesQuery) {
+        volumeSeriesQuery.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                browseVolumes();
+            }
+        });
+    }
+    if (searchQuery && volumeSeriesQuery) {
+        searchQuery.addEventListener('blur', () => {
+            if (!volumeSeriesQuery.value.trim() && searchQuery.value.trim()) {
+                volumeSeriesQuery.value = searchQuery.value.trim().replace(/#?\s*\d+.*$/, '').trim();
+            }
+        });
+    }
+    if (publisherField && volumePublisherFilter) {
+        publisherField.addEventListener('blur', () => {
+            if (!volumePublisherFilter.value.trim() && publisherField.value.trim()) {
+                volumePublisherFilter.value = publisherField.value.trim();
+            }
+        });
+    }
     
     function toggleLocalFilters() {
         if (!localFilters) return;
@@ -439,6 +936,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const seriesValue = seriesField.value.trim();
             const issueValue = issueField.value.trim();
             const titleValue = titleField.value.trim();
+            const publisherValue = publisherField ? publisherField.value.trim() : '';
 
             if (!seriesValue && !issueValue && !titleValue) {
                 setCoverStatus('Enter at least series, issue, or title before looking for covers.', 'warning');
@@ -446,121 +944,117 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             setCoverStatus('Searching ComicVine for cover images...', 'info');
+            fetchCoverBtn.disabled = true;
 
             const params = new URLSearchParams({
-                q: '',
-                comicvine: '1',
-                local: '0',
                 series_name: seriesValue,
                 issue_number: issueValue,
-                title: titleValue
+                title: titleValue,
+                publisher: publisherValue,
             });
+            appendNaPublisherParam(params);
 
-            fetch(`/comics/search-api?${params.toString()}`)
-                .then(resp => resp.json())
-                .then(data => {
-                    if (data.error) {
-                        setCoverStatus(data.error, 'danger');
+            fetch(`/comics/comicvine/covers/lookup?${params.toString()}`)
+                .then(resp => resp.json().then(data => ({ ok: resp.ok, data })))
+                .then(({ ok, data }) => {
+                    if (!ok || data.error) {
+                        setCoverStatus(data.error || 'Cover lookup failed.', 'danger');
                         return;
                     }
-                    const results = data.results || [];
-                    const coverResult = results.find(r => r.comicvine_id) ||
-                                        results.find(r => r.cover_images && r.cover_images.length) ||
-                                        results.find(r => r.cover_image_url);
-
-                    if (!coverResult) {
-                        setCoverStatus('No cover images returned from ComicVine for this entry.', 'warning');
+                    const covers = data.covers || [];
+                    if (!covers.length) {
+                        setCoverStatus('No cover images found on ComicVine for this issue.', 'warning');
                         return;
                     }
-
-                    if (coverResult.comicvine_id) {
-                        loadComicVineCoversAndShow(coverResult, {
-                            onLoading: () => setCoverStatus('Loading variant covers from ComicVine...', 'info'),
-                            onSingle: () => { setCoverStatus('Primary cover image fetched and applied.', 'success'); setTimeout(clearCoverStatus, 4000); },
-                            onModal: () => clearCoverStatus(),
-                            onEmpty: () => setCoverStatus('No cover images found on ComicVine for this issue.', 'warning')
-                        });
-                    } else if (coverResult.cover_images && coverResult.cover_images.length) {
-                        clearCoverStatus();
-                        showCoverSelectionModal(coverResult.cover_images, coverResult.title || seriesValue || 'Selected Comic');
-                    } else if (coverResult.cover_image_url) {
-                        fetchCoverImage(coverResult.cover_image_url);
-                        setCoverStatus('Primary cover image fetched and applied.', 'success');
-                        setTimeout(clearCoverStatus, 4000);
-                    }
+                    downloadCoversToGallery(covers).catch(() => {});
                 })
                 .catch(err => {
                     console.error('Cover search failed:', err);
                     setCoverStatus(`Cover search failed: ${err.message}`, 'danger');
+                })
+                .finally(() => {
+                    fetchCoverBtn.disabled = false;
                 });
         });
     }
 
-    function loadComicVineCoversAndShow(comic, hooks) {
-        hooks = hooks || {};
-        if (hooks.onLoading) hooks.onLoading();
-        fetch(`/comics/comicvine/issue/${comic.comicvine_id}/covers`)
-            .then(r => r.json())
+    const coverPrefetchCache = new Map();
+
+    function prefetchComicVineCovers(comicvineId) {
+        if (!comicvineId || coverPrefetchCache.has(comicvineId)) {
+            return;
+        }
+        coverPrefetchCache.set(
+            comicvineId,
+            fetch(`/comics/comicvine/issue/${comicvineId}/covers`).then((response) => response.json())
+        );
+    }
+
+    function loadComicVineCovers(comic) {
+        const comicvineId = comic.comicvine_id;
+        if (!comicvineId) {
+            if (comic.cover_images && comic.cover_images.length) {
+                downloadCoversToGallery(comic.cover_images).catch(() => {});
+            } else if (comic.cover_image_url) {
+                fetchCoverImage(comic.cover_image_url);
+            }
+            return;
+        }
+
+        const request = coverPrefetchCache.get(comicvineId)
+            || fetch(`/comics/comicvine/issue/${comicvineId}/covers`).then((response) => response.json());
+        request
             .then(data => {
                 const covers = (data && data.covers) || [];
-                if (covers.length > 1) {
-                    if (hooks.onModal) hooks.onModal();
-                    showCoverSelectionModal(covers, comic.title || comic.series || 'Selected Comic');
-                } else if (covers.length === 1) {
-                    fetchCoverImage(covers[0].url);
-                    if (hooks.onSingle) hooks.onSingle();
+                if (covers.length) {
+                    downloadCoversToGallery(covers).catch(() => {});
                 } else if (comic.cover_image_url) {
                     fetchCoverImage(comic.cover_image_url);
-                    if (hooks.onSingle) hooks.onSingle();
-                } else if (hooks.onEmpty) {
-                    hooks.onEmpty();
                 }
             })
             .catch(err => {
                 console.warn('Could not load ComicVine covers:', err);
                 if (comic.cover_image_url) {
                     fetchCoverImage(comic.cover_image_url);
-                    if (hooks.onSingle) hooks.onSingle();
-                } else if (hooks.onEmpty) {
-                    hooks.onEmpty();
                 }
             });
     }
 
-    searchBtn.addEventListener('click', function() {
-        console.log('Search button clicked');
+    let searchInFlight = false;
+
+    function performSearch() {
+        if (searchInFlight) return;
         const query = searchQuery.value.trim();
         const seriesValue = localSeriesInput ? localSeriesInput.value.trim() : '';
         const issueValue = localIssueInput ? localIssueInput.value.trim() : '';
-        console.log('Search query:', query, 'Series:', seriesValue, 'Issue:', issueValue);
-        if (!query && !seriesValue && !issueValue) {
-            showError('Enter a search term or select a series/issue.');
+        if (!query && !seriesValue && !issueValue && !selectedVolume) {
+            showError('Enter a search term, select a series/issue, or choose a volume.');
             return;
         }
-        
-        // Get selected search sources
+        if (selectedVolume && !query && !issueValue) {
+            showError('Volume selected — enter an issue number (or a query like "#15") to search within that volume.');
+            return;
+        }
+
         const searchComicVine = document.getElementById('searchComicVine').checked;
         const searchLocal = document.getElementById('searchLocal').checked;
-        
-        // Check if at least one source is selected
         if (!searchComicVine && !searchLocal) {
             showError('Please select at least one search source');
             return;
         }
-        
-        // Show loading state with selected sources
+
+        searchInFlight = true;
+        searchBtn.disabled = true;
         searchLoading.classList.remove('d-none');
         searchResults.classList.add('d-none');
         searchError.classList.add('d-none');
-        
-        // Update loading message to show selected sources
+
         const loadingText = searchLoading.querySelector('p');
         const sources = [];
         if (searchComicVine) sources.push('ComicVine');
         if (searchLocal) sources.push('Series Catalog');
         loadingText.textContent = `Searching ${sources.join(', ')}...`;
-        
-        // Build search parameters
+
         const params = new URLSearchParams({
             q: query,
             comicvine: searchComicVine ? '1' : '0',
@@ -568,39 +1062,61 @@ document.addEventListener('DOMContentLoaded', function() {
             series_name: seriesValue,
             issue_number: issueValue
         });
-        
-        // Make API request
-        console.log('Searching for:', query);
-        console.log('Search sources:', { comicvine: searchComicVine, local: searchLocal });
+        if (selectedVolume) {
+            if (selectedVolume.comicvine_volume_id) {
+                params.set('volume_id', String(selectedVolume.comicvine_volume_id));
+            }
+            if (selectedVolume.local_series_id) {
+                params.set('local_series_id', String(selectedVolume.local_series_id));
+            }
+        }
+        appendNaPublisherParam(params);
+
         fetch(`/comics/search-api?${params.toString()}`)
-            .then(response => {
-                console.log('Response status:', response.status);
-                return response.json();
-            })
+            .then(response => response.json())
             .then(data => {
-                console.log('Search results:', data);
-                console.log('Results array:', data.results);
-                console.log('Results length:', data.results ? data.results.length : 'undefined');
                 searchLoading.classList.add('d-none');
-                
                 if (data.error) {
                     showError(data.error);
                     return;
                 }
-                
                 if (data.results && data.results.length > 0) {
-                    console.log('Displaying results...');
                     displayResults(data.results);
+                    if (data.elapsed_ms != null) {
+                        console.info(`Search completed in ${data.elapsed_ms}ms`);
+                    }
                 } else {
-                    console.log('No results found');
                     showError('No comics found matching your search');
                 }
             })
             .catch(error => {
-                console.error('Search error:', error);
                 searchLoading.classList.add('d-none');
                 showError('Search failed: ' + error.message);
+            })
+            .finally(() => {
+                searchInFlight = false;
+                searchBtn.disabled = false;
             });
+    }
+
+    searchBtn.addEventListener('click', performSearch);
+
+    searchQuery.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            performSearch();
+        }
+    });
+
+    let searchDebounceTimer = null;
+    searchQuery.addEventListener('input', () => {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            const q = searchQuery.value.trim();
+            if (q.length >= 4 && /#?\d+\s*$/.test(q)) {
+                performSearch();
+            }
+        }, 500);
     });
     
     function displayResults(results) {
@@ -637,10 +1153,14 @@ document.addEventListener('DOMContentLoaded', function() {
                             </h6>
                             <p class="mb-1 text-muted">${publisher}${volume ? ' - ' + volume : ''}</p>
                             ${comic.volume ? `<small class="text-warning"><i class="bi bi-book"></i> <strong>${comic.volume}</strong></small><br>` : ''}
+                            ${comic.volume_start_year ? `<small class="text-warning"><i class="bi bi-calendar3"></i> Vol. start: ${comic.volume_start_year}</small><br>` : ''}
                             ${comic.release_date ? `<small class="text-primary"><i class="bi bi-calendar"></i> <strong>Release: ${formatDate(comic.release_date)}</strong></small><br>` : ''}
                             ${comic.characters ? `<small class="text-muted">Characters: ${comic.characters}</small><br>` : ''}
-                            ${comic.writers && comic.writers.length > 0 ? `<small class="text-muted">Writers: ${comic.writers.join(', ')}</small><br>` : ''}
-                            ${comic.artists && comic.artists.length > 0 ? `<small class="text-muted">Artists: ${comic.artists.join(', ')}</small><br>` : ''}
+                            ${comic.writer ? `<small class="text-muted">Writer: ${comic.writer}</small><br>` : ''}
+                            ${comic.artist ? `<small class="text-muted">Artist: ${comic.artist}</small><br>` : ''}
+                            ${!comic.writer && comic.writers && comic.writers.length > 0 ? `<small class="text-muted">Writers: ${comic.writers.join(', ')}</small><br>` : ''}
+                            ${!comic.artist && comic.artists && comic.artists.length > 0 ? `<small class="text-muted">Artists: ${comic.artists.join(', ')}</small><br>` : ''}
+                            ${comic.story_arc ? `<small class="text-muted">Story Arc: ${comic.story_arc}</small><br>` : ''}
                             ${comic.upc ? `<small class="text-info"><i class="bi bi-upc-scan"></i> UPC: ${comic.upc}</small><br>` : ''}
                             ${comic.isbn ? `<small class="text-info"><i class="bi bi-book"></i> ISBN: ${comic.isbn}</small><br>` : ''}
                             ${comic.source ? `<small class="text-secondary">Source: ${comic.source}${comic.ai_enhanced ? ' <i class="bi bi-robot text-info"></i>' : ''}${comic.needs_details ? ' <span class="badge bg-warning">Needs Details</span>' : ''}</small>` : ''}
@@ -653,6 +1173,12 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
             
             resultsList.appendChild(resultItem);
+
+            if (comic.comicvine_id && comic.has_variants_endpoint) {
+                resultItem.addEventListener('mouseenter', () => {
+                    prefetchComicVineCovers(comic.comicvine_id);
+                }, { once: true });
+            }
         });
         
         // Store results for selection
@@ -816,11 +1342,15 @@ document.addEventListener('DOMContentLoaded', function() {
             charactersField.value = characters;
         }
         if (description) {
-            // Update the description if there's a description field
-            const descField = document.getElementById('comicDescription');
-            if (descField) {
-                descField.value = description;
+            if (descriptionField) {
+                descriptionField.value = description;
             }
+        }
+        if (writers && writerField) {
+            writerField.value = writers;
+        }
+        if (artists && artistField) {
+            artistField.value = artists;
         }
         
         // Show success message
@@ -870,13 +1400,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Global function to select a comic
-    window.selectComic = function(index) {
-        const comic = window.searchResults[index];
-        console.log('selectComic called with comic:', comic);
-        
-        // Fill form fields
-        titleField.value = comic.title || '';  // Individual issue title (e.g., "Worldwide")
-        seriesField.value = comic.series || comic.volume || '';  // Series name (e.g., "The Amazing Spider-Man")
+    function fillFormFromComicMetadata(comic) {
+        if (!comic) return;
+
+        titleField.value = comic.title || '';
+        seriesField.value = comic.series || comic.volume || '';
         if (localSeriesInput) {
             localSeriesInput.value = comic.series || comic.volume || '';
         }
@@ -887,8 +1415,112 @@ document.addEventListener('DOMContentLoaded', function() {
         publisherField.value = comic.publisher || '';
         genreField.value = comic.genre || '';
         charactersField.value = comic.characters || '';
+        if (writerField) {
+            writerField.value = comic.writer || (Array.isArray(comic.writers) ? comic.writers.join(', ') : '');
+        }
+        if (artistField) {
+            artistField.value = comic.artist || (Array.isArray(comic.artists) ? comic.artists.join(', ') : '');
+        }
+        if (coloristField) coloristField.value = comic.colorist || '';
+        if (lettererField) lettererField.value = comic.letterer || '';
+        if (editorField) editorField.value = comic.editor || '';
+        if (coverArtistField) coverArtistField.value = comic.cover_artist || '';
+        if (storyArcField) storyArcField.value = comic.story_arc || '';
+        if (teamsField) teamsField.value = comic.teams || '';
+        if (descriptionField) descriptionField.value = comic.description || '';
+        if (comicvineIssueIdField) {
+            comicvineIssueIdField.value = comic.comicvine_id || comic.id || '';
+        }
+        if (comicvineUrlField) {
+            comicvineUrlField.value = comic.comicvine_url || '';
+        }
         upcField.value = comic.upc || '';
         isbnField.value = comic.isbn || '';
+
+        if (comic.release_date && releaseDateField) {
+            const date = new Date(comic.release_date);
+            if (!isNaN(date.getTime())) {
+                releaseDateField.value = date.toISOString().split('T')[0];
+            }
+        }
+    }
+
+    function setRefreshComicVineStatus(message, level) {
+        const statusEl = document.getElementById('refreshComicVineStatus');
+        if (!statusEl) return;
+        statusEl.className = `alert alert-${level || 'info'} mb-3`;
+        statusEl.textContent = message;
+        statusEl.classList.remove('d-none');
+    }
+
+    const refreshComicVineBtn = document.getElementById('refreshComicVineBtn');
+    if (refreshComicVineBtn) {
+        refreshComicVineBtn.addEventListener('click', () => {
+            const comicId = refreshComicVineBtn.dataset.comicId;
+            if (!comicId) return;
+
+            const params = new URLSearchParams();
+            appendNaPublisherParam(params);
+
+            refreshComicVineBtn.disabled = true;
+            setRefreshComicVineStatus('Fetching latest metadata from ComicVine...', 'info');
+
+            fetch(`/comics/${comicId}/comicvine/refresh?${params.toString()}`)
+                .then(resp => resp.json().then(data => ({ ok: resp.ok, data })))
+                .then(({ ok, data }) => {
+                    if (!ok || data.error) {
+                        setRefreshComicVineStatus(data.error || 'ComicVine refresh failed.', 'danger');
+                        return;
+                    }
+                    fillFormFromComicMetadata(data.metadata || {});
+                    const matchedBy = data.matched_by === 'comicvine_id'
+                        ? 'linked ComicVine issue'
+                        : 'series/issue search';
+                    const covers = data.covers || [];
+                    if (descriptionField) {
+                        descriptionField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+
+                    if (!covers.length) {
+                        setRefreshComicVineStatus(
+                            `Metadata refreshed from ComicVine (${matchedBy}). No alternate covers were found. Click Save Comic to keep changes.`,
+                            'success'
+                        );
+                        return;
+                    }
+
+                    setRefreshComicVineStatus(
+                        `Metadata refreshed from ComicVine (${matchedBy}). Adding ${covers.length} cover variant(s)...`,
+                        'info'
+                    );
+                    return downloadCoversToGallery(covers)
+                        .then(() => {
+                            setRefreshComicVineStatus(
+                                `Metadata and ${covers.length} cover variant(s) refreshed. Click Save Comic to keep changes.`,
+                                'success'
+                            );
+                        })
+                        .catch(error => {
+                            setRefreshComicVineStatus(
+                                `Metadata refreshed, but cover variants could not be added: ${error.message}`,
+                                'warning'
+                            );
+                        });
+                })
+                .catch(err => {
+                    setRefreshComicVineStatus(`ComicVine refresh failed: ${err.message}`, 'danger');
+                })
+                .finally(() => {
+                    refreshComicVineBtn.disabled = false;
+                });
+        });
+    }
+
+    window.selectComic = function(index) {
+        const comic = window.searchResults[index];
+        console.log('selectComic called with comic:', comic);
+        
+        fillFormFromComicMetadata(comic);
         
         // Handle AI-enhanced data
         if (comic.ai_enhanced) {
@@ -907,19 +1539,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
         
-        // Format and set release date
-        if (comic.release_date) {
-            const date = new Date(comic.release_date);
-            if (!isNaN(date.getTime())) {
-                releaseDateField.value = date.toISOString().split('T')[0];
-            }
-        }
-        
         // Cover handling: prefer lazy ComicVine variant lookup when we have an id.
         if (comic.cover_images && comic.cover_images.length > 0) {
-            showCoverSelectionModal(comic.cover_images, comic.title);
+            downloadCoversToGallery(comic.cover_images).catch(() => {});
         } else if (comic.comicvine_id) {
-            loadComicVineCoversAndShow(comic);
+            loadComicVineCovers(comic);
         } else if (comic.cover_image_url) {
             fetchCoverImage(comic.cover_image_url);
         }
@@ -931,445 +1555,245 @@ document.addEventListener('DOMContentLoaded', function() {
         titleField.scrollIntoView({ behavior: 'smooth' });
     };
     
-    function showCoverSelectionModal(coverImages, comicTitle) {
-        // Create modal if it doesn't exist
-        let modal = document.getElementById('coverSelectionModal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.className = 'modal fade';
-            modal.id = 'coverSelectionModal';
-            modal.innerHTML = `
-                <div class="modal-dialog modal-xl">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">Select Cover Image for "${comicTitle}"</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <p class="text-muted mb-3">Multiple cover images available. Select one as primary cover or download all:</p>
-                            <div class="mb-3">
-                                                    <button type="button" class="btn btn-success me-2" id="downloadAllCoversBtn">
-                        <i class="bi bi-download"></i> Download All Covers
-                    </button>
-                    <button type="button" class="btn btn-primary" id="selectCoverFromModalBtn">
-                        <i class="bi bi-check-circle"></i> Use Selected Cover
-                    </button>
-                            </div>
-                            <div id="coverOptions" class="row g-3">
-                                <!-- Cover options will be inserted here -->
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        }
-        
-        // Populate cover options
-        const coverOptions = document.getElementById('coverOptions');
-        coverOptions.innerHTML = '';
-        modal.querySelector('.modal-title').textContent = `Select Cover Image for "${comicTitle}"`;
-        
-        coverImages.forEach((cover, index) => {
-            const coverCard = document.createElement('div');
-            coverCard.className = 'col-md-4 col-sm-6';
-            coverCard.innerHTML = `
-                <div class="card h-100">
-                    <div class="card-body text-center">
-                        <div class="form-check mb-2">
-                            <input class="form-check-input" type="radio" name="selectedCover" 
-                                   id="cover${index}" value="${cover.url}" 
-                                   ${index === 0 ? 'checked' : ''}>
-                            <label class="form-check-label" for="cover${index}">
-                                <strong>${cover.label}</strong>
-                            </label>
-                        </div>
-                        <img src="${cover.url}" class="img-fluid mb-2" alt="${cover.label}" 
-                             style="max-height: 250px; object-fit: contain; border: 2px solid #dee2e6; border-radius: 8px;">
-                        <div class="d-grid gap-1">
-                            <button type="button" class="btn btn-outline-primary btn-sm download-cover-btn" 
-                                    data-url="${cover.url}" data-label="${cover.label}">
-                                <i class="bi bi-download"></i> Download This Cover
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            // Add event listener for download button
-            const downloadBtn = coverCard.querySelector('.download-cover-btn');
-            downloadBtn.addEventListener('click', function() {
-                const url = this.getAttribute('data-url');
-                const label = this.getAttribute('data-label');
-                downloadCover(url, label);
-            });
-            
-            coverOptions.appendChild(coverCard);
-        });
-        
-        // Show modal
-        const bsModal = new bootstrap.Modal(modal);
-        bsModal.show();
-        
-        // Add event listeners for modal buttons
-        document.getElementById('downloadAllCoversBtn').addEventListener('click', downloadAllCovers);
-        document.getElementById('selectCoverFromModalBtn').addEventListener('click', selectCoverFromModal);
+    function escapeCoverHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
-    
-    // Make function globally accessible
-    window.selectCoverFromModal = function() {
-        // Get the selected cover
-        const selectedCover = document.querySelector('input[name="selectedCover"]:checked');
-        if (!selectedCover) {
-            alert('Please select a cover image first.');
+
+    let storedCoverVariants = [];
+
+    function ensureCoverHiddenInputs() {
+        const form = document.querySelector('form');
+        if (!form) return {};
+
+        let blobInput = form.querySelector('input[name="fetched_cover_blob"]');
+        if (!blobInput) {
+            blobInput = document.createElement('input');
+            blobInput.type = 'hidden';
+            blobInput.name = 'fetched_cover_blob';
+            form.appendChild(blobInput);
+        }
+
+        let mimeInput = form.querySelector('input[name="fetched_cover_mime"]');
+        if (!mimeInput) {
+            mimeInput = document.createElement('input');
+            mimeInput.type = 'hidden';
+            mimeInput.name = 'fetched_cover_mime';
+            form.appendChild(mimeInput);
+        }
+
+        let additionalInput = form.querySelector('input[name="additional_covers"]');
+        if (!additionalInput) {
+            additionalInput = document.createElement('input');
+            additionalInput.type = 'hidden';
+            additionalInput.name = 'additional_covers';
+            form.appendChild(additionalInput);
+        }
+
+        let coversUpdatedInput = form.querySelector('input[name="covers_updated"]');
+        if (!coversUpdatedInput) {
+            coversUpdatedInput = document.createElement('input');
+            coversUpdatedInput.type = 'hidden';
+            coversUpdatedInput.name = 'covers_updated';
+            coversUpdatedInput.value = '0';
+            form.appendChild(coversUpdatedInput);
+        }
+
+        return { blobInput, mimeInput, additionalInput, coversUpdatedInput, form };
+    }
+
+    function setCoversUpdated(updated) {
+        const inputs = ensureCoverHiddenInputs();
+        if (inputs.coversUpdatedInput) {
+            inputs.coversUpdatedInput.value = updated ? '1' : '0';
+        }
+    }
+
+    function coverPreviewSrc(cover) {
+        if (cover.preview_url) {
+            return cover.preview_url;
+        }
+        return `data:${cover.mime_type || 'image/jpeg'};base64,${cover.blob_data}`;
+    }
+
+    function renderStoredCoversGallery() {
+        const section = document.getElementById('storedCoversSection');
+        const gallery = document.getElementById('storedCoversGallery');
+        if (!gallery) return;
+
+        if (!storedCoverVariants.length) {
+            section?.classList.add('d-none');
+            gallery.innerHTML = '';
             return;
         }
-        
-        const imageUrl = selectedCover.value;
-        const label = selectedCover.nextElementSibling.textContent.trim();
-        
-        // Show loading state
-        const loadingMsg = document.createElement('div');
-        loadingMsg.className = 'alert alert-info mt-2';
-        loadingMsg.innerHTML = `<i class="bi bi-arrow-clockwise"></i> Downloading ${label}...`;
-        titleField.parentNode.appendChild(loadingMsg);
-        
-        // Fetch the cover
-        fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
-            .then(response => response.json())
-            .then(data => {
-                loadingMsg.remove();
-                
-                if (data.blob_data) {
-                    // Create hidden inputs to store the BLOB data and MIME type
-                    let blobInput = document.querySelector('input[name="fetched_cover_blob"]');
-                    if (!blobInput) {
-                        blobInput = document.createElement('input');
-                        blobInput.type = 'hidden';
-                        blobInput.name = 'fetched_cover_blob';
-                        document.querySelector('form').appendChild(blobInput);
+
+        section?.classList.remove('d-none');
+        gallery.innerHTML = storedCoverVariants.map((cover, index) => {
+            const isPrimary = index === 0;
+            const src = coverPreviewSrc(cover);
+            const label = escapeCoverHtml(cover.label || (isPrimary ? 'Primary Cover' : `Cover ${index + 1}`));
+            return `
+                <div class="stored-cover-item${isPrimary ? ' is-primary' : ''}">
+                    <img src="${src}" alt="${label}">
+                    <span class="stored-cover-label">${label}</span>
+                    ${isPrimary
+                        ? '<span class="stored-cover-badge">Primary</span>'
+                        : `<button type="button" class="btn btn-outline-primary btn-sm stored-cover-set-primary" data-cover-index="${index}">Set as Primary</button>`
                     }
-                    blobInput.value = data.blob_data;
-                    
-                    let mimeInput = document.querySelector('input[name="fetched_cover_mime"]');
-                    if (!mimeInput) {
-                        mimeInput = document.createElement('input');
-                        mimeInput.type = 'hidden';
-                        mimeInput.name = 'fetched_cover_mime';
-                        document.querySelector('form').appendChild(mimeInput);
-                    }
-                    mimeInput.value = data.mime_type;
-                    
-                    // Show success message
-                    const successMsg = document.createElement('div');
-                    successMsg.className = 'alert alert-success mt-2';
-                    successMsg.innerHTML = `<i class="bi bi-check-circle"></i> ${label} selected and downloaded successfully!`;
-                    titleField.parentNode.appendChild(successMsg);
-                    
-                    // Remove message after 3 seconds
-                    setTimeout(() => successMsg.remove(), 3000);
-                    
-                    // Close modal
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('coverSelectionModal'));
-                    if (modal) {
-                        modal.hide();
-                    }
-                }
-            })
-        .catch(error => {
-            loadingMsg.remove();
-            const errorMsg = document.createElement('div');
-            errorMsg.className = 'alert alert-danger mt-2';
-            errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Error downloading cover: ${error.message}`;
-            titleField.parentNode.appendChild(errorMsg);
-            setTimeout(() => errorMsg.remove(), 5000);
+                </div>
+            `;
+        }).join('');
+
+        gallery.querySelectorAll('.stored-cover-set-primary').forEach(button => {
+            button.addEventListener('click', function() {
+                swapStoredPrimaryCover(parseInt(this.dataset.coverIndex, 10));
+            });
         });
     }
-    
-    function downloadCover(imageUrl, label) {
-        // Show loading state
-        const loadingMsg = document.createElement('div');
-        loadingMsg.className = 'alert alert-info mt-2';
-        loadingMsg.innerHTML = `<i class="bi bi-arrow-clockwise"></i> Downloading ${label}...`;
-        titleField.parentNode.appendChild(loadingMsg);
-        
-        // Fetch the cover
-        fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
+
+    function updateCoverFormFields(primaryCover, additionalCovers) {
+        const inputs = ensureCoverHiddenInputs();
+        inputs.blobInput.value = primaryCover.blob_data;
+        inputs.mimeInput.value = primaryCover.mime_type || 'image/jpeg';
+        inputs.additionalInput.value = additionalCovers.length
+            ? JSON.stringify(additionalCovers)
+            : '';
+    }
+
+    function setStoredCoverVariants(covers, markUpdated) {
+        storedCoverVariants = covers.map((cover, index) => ({
+            blob_data: cover.blob_data,
+            mime_type: cover.mime_type || 'image/jpeg',
+            label: cover.label || (index === 0 ? 'Primary Cover' : `Cover ${index + 1}`),
+            preview_url: cover.preview_url || null,
+        }));
+        renderStoredCoversGallery();
+        if (markUpdated) {
+            setCoversUpdated(true);
+        }
+    }
+
+    function swapStoredPrimaryCover(index) {
+        if (index <= 0 || index >= storedCoverVariants.length) {
+            return;
+        }
+
+        const covers = storedCoverVariants.map(cover => ({ ...cover, preview_url: null }));
+        const newPrimary = covers[index];
+        const oldPrimary = covers[0];
+        covers[0] = newPrimary;
+        covers[index] = oldPrimary;
+        storedCoverVariants = covers;
+
+        const additional = covers.slice(1).map(cover => ({
+            blob_data: cover.blob_data,
+            mime_type: cover.mime_type,
+            label: cover.label,
+        }));
+        updateCoverFormFields(covers[0], additional);
+        setCoversUpdated(true);
+        showFetchedCoverPreview(covers[0].blob_data, covers[0].mime_type);
+        renderStoredCoversGallery();
+        setCoverStatus(`"${covers[0].label}" set as primary. Save the comic to keep this change.`, 'success');
+        setTimeout(clearCoverStatus, 5000);
+    }
+
+    function showFetchedCoverPreview(blobData, mimeType) {
+        const previewHost = document.getElementById('fetchedCoverPreview');
+        const src = `data:${mimeType || 'image/jpeg'};base64,${blobData}`;
+        if (previewHost) {
+            previewHost.innerHTML = `
+                <small class="text-muted">Selected cover preview:</small>
+                <img src="${src}" alt="Selected cover preview" class="img-thumbnail mt-1" style="max-height: 160px;">
+            `;
+            return;
+        }
+        const status = document.getElementById('coverSearchStatus');
+        if (status) {
+            status.className = 'alert alert-success mt-2';
+            status.innerHTML = `
+                <div><i class="bi bi-check-circle"></i> Cover selected. Save the comic to apply it.</div>
+                <img src="${src}" alt="Selected cover preview" class="img-thumbnail mt-2" style="max-height: 160px;">
+            `;
+            status.classList.remove('d-none');
+        }
+    }
+
+    function applyFetchedCoverBlobs(primaryCover, additionalCovers, label) {
+        const primary = {
+            blob_data: primaryCover.blob_data,
+            mime_type: primaryCover.mime_type || 'image/jpeg',
+            label: label || 'Primary Cover',
+            preview_url: null,
+        };
+        const additional = (additionalCovers || []).map((cover, index) => ({
+            blob_data: cover.blob_data,
+            mime_type: cover.mime_type || 'image/jpeg',
+            label: cover.label || `Cover ${index + 2}`,
+            preview_url: null,
+        }));
+
+        updateCoverFormFields(primary, additional);
+        setStoredCoverVariants([primary, ...additional], true);
+        showFetchedCoverPreview(primary.blob_data, primary.mime_type);
+        const coverCount = 1 + additional.length;
+        const statusLabel = coverCount > 1
+            ? `${coverCount} covers stored (${label || 'Primary Cover'} is primary)`
+            : (label || 'Cover');
+        setCoverStatus(`${statusLabel}. Save the comic to apply.`, 'success');
+        setTimeout(clearCoverStatus, 5000);
+    }
+
+    function fetchCoverBlobFromUrl(imageUrl) {
+        return fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
             .then(response => response.json())
             .then(data => {
-                loadingMsg.remove();
-                
-                if (data.blob_data) {
-                    // Create hidden inputs to store the BLOB data and MIME type
-                    let blobInput = document.querySelector('input[name="fetched_cover_blob"]');
-                    if (!blobInput) {
-                        blobInput = document.createElement('input');
-                        blobInput.type = 'hidden';
-                        blobInput.name = 'fetched_cover_blob';
-                        document.querySelector('form').appendChild(blobInput);
-                    }
-                    blobInput.value = data.blob_data;
-                    
-                    let mimeInput = document.querySelector('input[name="fetched_cover_mime"]');
-                    if (!mimeInput) {
-                        mimeInput = document.createElement('input');
-                        mimeInput.type = 'hidden';
-                        mimeInput.name = 'fetched_cover_mime';
-                        document.querySelector('form').appendChild(mimeInput);
-                    }
-                    mimeInput.value = data.mime_type;
-                    
-                    // Show success message
-                    const successMsg = document.createElement('div');
-                    successMsg.className = 'alert alert-success mt-2';
-                    successMsg.innerHTML = `<i class="bi bi-check-circle"></i> ${label} downloaded successfully!`;
-                    titleField.parentNode.appendChild(successMsg);
-                    
-                    // Remove message after 3 seconds
-                    setTimeout(() => successMsg.remove(), 3000);
-                    
-                    // Close modal
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('coverSelectionModal'));
-                    if (modal) {
-                        modal.hide();
-                    }
+                if (!data.blob_data) {
+                    throw new Error(data.error || 'Failed to download cover image');
                 }
+                return data;
+            });
+    }
+
+    function downloadCoversToGallery(coverImages) {
+        const covers = (coverImages || []).filter(cover => cover && cover.url);
+        if (!covers.length) {
+            setCoverStatus('No cover images are available to add.', 'warning');
+            return;
+        }
+
+        setCoverStatus(`Adding ${covers.length} cover image(s) to the Cover Variants section...`, 'info');
+        return Promise.all(covers.map((cover, index) => fetchCoverBlobFromUrl(cover.url).then(data => ({
+            blob_data: data.blob_data,
+            mime_type: data.mime_type,
+            label: cover.label || (index === 0 ? 'Regular Cover' : `Variant Cover ${index}`),
+        }))))
+            .then(downloaded => {
+                const [primary, ...additional] = downloaded;
+                applyFetchedCoverBlobs(primary, additional, primary.label);
+                return downloaded;
             })
             .catch(error => {
-                loadingMsg.remove();
-                console.error('Failed to fetch cover image:', error);
-                
-                const errorMsg = document.createElement('div');
-                errorMsg.className = 'alert alert-danger mt-2';
-                errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Failed to download ${label}`;
-                titleField.parentNode.appendChild(errorMsg);
-                
-                setTimeout(() => errorMsg.remove(), 3000);
+                setCoverStatus(`Failed to add covers: ${error.message}`, 'danger');
+                throw error;
             });
     }
-    
-    function downloadAllCovers() {
-        const modal = document.getElementById('coverSelectionModal');
-        const coverOptions = document.getElementById('coverOptions');
-        const covers = Array.from(coverOptions.querySelectorAll('.card')).map((card, index) => {
-            const img = card.querySelector('img');
-            const label = card.querySelector('.card-title').textContent;
-            return {
-                url: img.src,
-                label: label
-            };
-        });
-        
-        if (covers.length === 0) return;
-        
-        // Show loading state
-        const loadingMsg = document.createElement('div');
-        loadingMsg.className = 'alert alert-info mt-2';
-        loadingMsg.innerHTML = `<i class="bi bi-arrow-clockwise"></i> Downloading all ${covers.length} cover images...`;
-        titleField.parentNode.appendChild(loadingMsg);
-        
-        // Download all covers
-        fetch('/comics/fetch-multiple-covers', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                cover_images: covers
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            loadingMsg.remove();
-            
-            if (data.success) {
-                // Store all downloaded covers for selection
-                window.downloadedCovers = data.covers;
-                
-                // Show success message
-                const successMsg = document.createElement('div');
-                successMsg.className = 'alert alert-success mt-2';
-                successMsg.innerHTML = `<i class="bi bi-check-circle"></i> ${data.message}`;
-                titleField.parentNode.appendChild(successMsg);
-                
-                // Show cover selection interface
-                showDownloadedCoversSelection(data.covers);
-                
-                // Remove message after 5 seconds
-                setTimeout(() => successMsg.remove(), 5000);
-                
-                // Close modal
-                const bsModal = bootstrap.Modal.getInstance(modal);
-                if (bsModal) {
-                    bsModal.hide();
-                }
-            } else {
-                throw new Error(data.error || 'Failed to download covers');
-            }
-        })
-        .catch(error => {
-            loadingMsg.remove();
-            console.error('Failed to download covers:', error);
-            
-            const errorMsg = document.createElement('div');
-            errorMsg.className = 'alert alert-danger mt-2';
-            errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Failed to download covers: ${error.message}`;
-            titleField.parentNode.appendChild(errorMsg);
-            
-            setTimeout(() => errorMsg.remove(), 5000);
-        });
-    }
-    
-    function showDownloadedCoversSelection(covers) {
-        // Create selection interface
-        const selectionDiv = document.createElement('div');
-        selectionDiv.className = 'mt-3 p-3 border rounded bg-light';
-        selectionDiv.innerHTML = `
-            <h6><i class="bi bi-images"></i> Select Cover Image</h6>
-            <p class="text-muted small">Choose which cover image to use as the primary cover for this comic:</p>
-            <div class="row g-2">
-                ${covers.map((cover, index) => `
-                    <div class="col-md-4 col-sm-6">
-                        <div class="card h-100">
-                            <div class="card-body text-center">
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="radio" name="selectedDownloadedCover" 
-                                           id="downloadedCover${index}" value="${cover.filename}" 
-                                           ${index === 0 ? 'checked' : ''}>
-                                    <label class="form-check-label" for="downloadedCover${index}">
-                                        <strong>${cover.label}</strong>
-                                    </label>
-                                </div>
-                                <img src="/uploads/${cover.filename}" class="img-fluid mb-2" alt="${cover.label}" 
-                                     style="max-height: 200px; object-fit: contain; border: 2px solid #dee2e6; border-radius: 8px;">
-                                <div class="d-grid">
-                                    <button type="button" class="btn btn-primary btn-sm use-cover-btn" data-filename="${cover.filename}">
-                                        <i class="bi bi-check"></i> Use This Cover
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-            <div class="mt-3 text-center">
-                <button type="button" class="btn btn-success" id="selectDownloadedCoverFromRadioBtn">
-                    <i class="bi bi-check-circle"></i> Use Selected Cover
-                </button>
-            </div>
-        `;
-        
-        titleField.parentNode.appendChild(selectionDiv);
-        
-        // Add event listeners for the use cover buttons
-        selectionDiv.querySelectorAll('.use-cover-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const filename = this.getAttribute('data-filename');
-                selectDownloadedCover(filename);
-            });
-        });
-        
-        // Add event listener for the radio selection button
-        selectionDiv.querySelector('#selectDownloadedCoverFromRadioBtn').addEventListener('click', selectDownloadedCoverFromRadio);
-        
-        // Store reference for cleanup
-        window.coverSelectionDiv = selectionDiv;
-    }
-    
-    function selectDownloadedCoverFromRadio() {
-        // Get the selected cover from radio button
-        const selectedCover = document.querySelector('input[name="selectedDownloadedCover"]:checked');
-        if (!selectedCover) {
-            alert('Please select a cover image first.');
-            return;
-        }
-        
-        const filename = selectedCover.value;
-        selectDownloadedCover(filename);
-    }
-    
-    function selectDownloadedCover(filename) {
-        // Set the selected cover as primary
-        let hiddenInput = document.querySelector('input[name="fetched_cover"]');
-        if (!hiddenInput) {
-            hiddenInput = document.createElement('input');
-            hiddenInput.type = 'hidden';
-            hiddenInput.name = 'fetched_cover';
-            document.querySelector('form').appendChild(hiddenInput);
-        }
-        hiddenInput.value = filename;
-        
-        // Store other covers as additional covers
-        if (window.downloadedCovers && window.downloadedCovers.length > 1) {
-            const additionalCovers = window.downloadedCovers.filter(cover => cover.filename !== filename);
-            
-            if (additionalCovers.length > 0) {
-                let additionalInput = document.querySelector('input[name="additional_covers"]');
-                if (!additionalInput) {
-                    additionalInput = document.createElement('input');
-                    additionalInput.type = 'hidden';
-                    additionalInput.name = 'additional_covers';
-                    document.querySelector('form').appendChild(additionalInput);
-                }
-                additionalInput.value = JSON.stringify(additionalCovers);
-            }
-        }
-        
-        // Show success message
-        const successMsg = document.createElement('div');
-        successMsg.className = 'alert alert-success mt-2';
-        successMsg.innerHTML = `<i class="bi bi-check-circle"></i> Cover image selected! All covers will be saved.`;
-        titleField.parentNode.appendChild(successMsg);
-        
-        // Remove message after 3 seconds
-        setTimeout(() => successMsg.remove(), 3000);
-        
-        // Remove the selection interface
-        if (window.coverSelectionDiv) {
-            window.coverSelectionDiv.remove();
-            window.coverSelectionDiv = null;
-        }
-    }
-    
+
     function fetchCoverImage(imageUrl) {
-        fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
-            .then(response => response.json())
+        fetchCoverBlobFromUrl(imageUrl)
             .then(data => {
-                if (data.blob_data) {
-                    // Create hidden inputs to store the BLOB data and MIME type
-                    let blobInput = document.querySelector('input[name="fetched_cover_blob"]');
-                    if (!blobInput) {
-                        blobInput = document.createElement('input');
-                        blobInput.type = 'hidden';
-                        blobInput.name = 'fetched_cover_blob';
-                        document.querySelector('form').appendChild(blobInput);
-                    }
-                    blobInput.value = data.blob_data;
-                    
-                    let mimeInput = document.querySelector('input[name="fetched_cover_mime"]');
-                    if (!mimeInput) {
-                        mimeInput = document.createElement('input');
-                        mimeInput.type = 'hidden';
-                        mimeInput.name = 'fetched_cover_mime';
-                        document.querySelector('form').appendChild(mimeInput);
-                    }
-                    mimeInput.value = data.mime_type;
-                    
-                    // Show success message
-                    const successMsg = document.createElement('div');
-                    successMsg.className = 'alert alert-success mt-2';
-                    successMsg.innerHTML = '<i class="bi bi-check-circle"></i> Cover image fetched successfully!';
-                    titleField.parentNode.appendChild(successMsg);
-                    
-                    // Remove message after 3 seconds
-                    setTimeout(() => successMsg.remove(), 3000);
-                }
+                applyFetchedCoverBlobs(
+                    { blob_data: data.blob_data, mime_type: data.mime_type },
+                    [],
+                    'Cover'
+                );
             })
             .catch(error => {
                 console.error('Failed to fetch cover image:', error);
+                setCoverStatus(`Failed to fetch cover image: ${error.message}`, 'danger');
             });
     }
     
@@ -1495,6 +1919,259 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+
+    // --- Bulk Add ---
+    const bulkPreviewBtn = document.getElementById('bulkPreviewBtn');
+    const bulkAddBtn = document.getElementById('bulkAddBtn');
+    if (bulkPreviewBtn && bulkAddBtn) {
+        const bulkSeries = document.getElementById('bulkSeries');
+        const bulkIssueRanges = document.getElementById('bulkIssueRanges');
+        const bulkStartYear = document.getElementById('bulkStartYear');
+        const bulkVolumeHint = document.getElementById('bulkVolumeHint');
+        const bulkCondition = document.getElementById('bulkCondition');
+        const bulkSkipExisting = document.getElementById('bulkSkipExisting');
+        const bulkPreview = document.getElementById('bulkPreview');
+        const bulkError = document.getElementById('bulkError');
+        const bulkProgress = document.getElementById('bulkProgress');
+        const bulkProgressBar = document.getElementById('bulkProgressBar');
+        const bulkProgressLabel = document.getElementById('bulkProgressLabel');
+        const bulkProgressCount = document.getElementById('bulkProgressCount');
+        const bulkResults = document.getElementById('bulkResults');
+        const bulkResultsList = document.getElementById('bulkResultsList');
+
+        let bulkIssuesQueue = [];
+        let bulkRunning = false;
+
+        function showBulkError(message) {
+            bulkError.textContent = message;
+            bulkError.classList.remove('d-none');
+        }
+
+        function clearBulkError() {
+            bulkError.classList.add('d-none');
+            bulkError.textContent = '';
+        }
+
+        async function parseBulkRanges() {
+            clearBulkError();
+            bulkPreview.classList.add('d-none');
+            const rangesText = bulkIssueRanges.value.trim();
+            if (!rangesText) {
+                showBulkError('Enter issue ranges (e.g. 1-32 or 1-14, 16-22).');
+                return null;
+            }
+            const response = await fetch('/comics/bulk-add/parse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ issue_ranges: rangesText }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                showBulkError(data.error || 'Could not parse issue ranges.');
+                return null;
+            }
+            return data.issues;
+        }
+
+        bulkPreviewBtn.addEventListener('click', async () => {
+            const series = bulkSeries.value.trim();
+            if (!series) {
+                showBulkError('Enter a series name.');
+                return;
+            }
+            const issues = await parseBulkRanges();
+            if (!issues) return;
+            bulkIssuesQueue = issues;
+            bulkPreview.textContent = `${issues.length} issue(s) will be added for "${series}": #${issues.join(', #')}`;
+            bulkPreview.classList.remove('d-none');
+        });
+
+        async function runBulkAdd() {
+            if (bulkRunning) return;
+            clearBulkError();
+            bulkResults.classList.add('d-none');
+            bulkResultsList.innerHTML = '';
+
+            const series = bulkSeries.value.trim();
+            if (!series) {
+                showBulkError('Enter a series name.');
+                return;
+            }
+
+            const issues = bulkIssuesQueue.length
+                ? bulkIssuesQueue
+                : await parseBulkRanges();
+            if (!issues || !issues.length) return;
+
+            bulkRunning = true;
+            bulkPreviewBtn.disabled = true;
+            bulkAddBtn.disabled = true;
+            bulkProgress.classList.remove('d-none');
+            bulkProgressBar.style.width = '0%';
+            bulkProgressCount.textContent = `0 / ${issues.length}`;
+
+            const summary = { added: 0, skipped: 0, failed: 0 };
+            const payloadBase = {
+                series,
+                start_year: bulkStartYear.value.trim() || null,
+                volume_hint: bulkVolumeHint.value.trim(),
+                condition: bulkCondition.value,
+                skip_existing: bulkSkipExisting.checked,
+            };
+            if (selectedVolume && selectedVolume.comicvine_volume_id) {
+                payloadBase.volume_id = selectedVolume.comicvine_volume_id;
+            }
+
+            for (let i = 0; i < issues.length; i++) {
+                const issueNumber = issues[i];
+                bulkProgressLabel.textContent = `Adding ${series} #${issueNumber}...`;
+                bulkProgressCount.textContent = `${i} / ${issues.length}`;
+
+                try {
+                    const response = await fetch('/comics/bulk-add/issue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...payloadBase, issue_number: issueNumber }),
+                    });
+                    const result = await response.json();
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item py-1';
+
+                    if (result.status === 'added') {
+                        summary.added += 1;
+                        li.classList.add('list-group-item-success');
+                        li.textContent = `#${result.issue_number} ${result.title || ''} — added`;
+                    } else if (result.status === 'skipped') {
+                        summary.skipped += 1;
+                        li.classList.add('list-group-item-warning');
+                        li.textContent = `#${result.issue_number} — skipped (${result.reason || 'duplicate'})`;
+                    } else {
+                        summary.failed += 1;
+                        li.classList.add('list-group-item-danger');
+                        li.textContent = `#${issueNumber} — ${result.error || 'failed'}`;
+                    }
+                    bulkResultsList.appendChild(li);
+                } catch (err) {
+                    summary.failed += 1;
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item list-group-item-danger py-1';
+                    li.textContent = `#${issueNumber} — ${err.message}`;
+                    bulkResultsList.appendChild(li);
+                }
+
+                const pct = Math.round(((i + 1) / issues.length) * 100);
+                bulkProgressBar.style.width = `${pct}%`;
+                bulkProgressCount.textContent = `${i + 1} / ${issues.length}`;
+            }
+
+            bulkProgressLabel.textContent = 'Done';
+            bulkProgressBar.classList.remove('progress-bar-animated');
+            bulkResults.classList.remove('d-none');
+
+            bulkPreview.textContent = `Finished: ${summary.added} added, ${summary.skipped} skipped, ${summary.failed} failed.`;
+            bulkPreview.classList.remove('d-none');
+
+            bulkRunning = false;
+            bulkPreviewBtn.disabled = false;
+            bulkAddBtn.disabled = false;
+            bulkIssuesQueue = [];
+        }
+
+        bulkAddBtn.addEventListener('click', runBulkAdd);
+    }
+
+    {% if comic %}
+    async function uploadCoverVariantsBeforeSave() {
+        const form = document.querySelector('form[method="POST"][enctype="multipart/form-data"]');
+        const inputs = ensureCoverHiddenInputs();
+
+        if (!form || inputs.coversUpdatedInput.value !== '1') {
+            return true;
+        }
+
+        const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+        submitButtons.forEach(button => button.disabled = true);
+        setCoverStatus(`Saving ${storedCoverVariants.length} cover image(s)...`, 'info');
+
+        try {
+            for (let index = 0; index < storedCoverVariants.length; index += 1) {
+                const cover = storedCoverVariants[index];
+                const response = await fetch('{{ url_for("comics.save_cover_variant", id=comic.id) }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': form.querySelector('input[name="csrf_token"]')?.value || '',
+                    },
+                    body: JSON.stringify({
+                        replace: index === 0,
+                        position: index,
+                        cover: {
+                            blob_data: cover.blob_data,
+                            mime_type: cover.mime_type,
+                            label: cover.label,
+                        },
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || `Could not save cover ${index + 1}.`);
+                }
+            }
+
+            // The variants are already committed individually. Do not attach
+            // their Base64 data to the regular metadata form submission.
+            inputs.blobInput.value = '';
+            inputs.mimeInput.value = '';
+            inputs.additionalInput.value = '';
+            setCoversUpdated(false);
+            return true;
+        } catch (error) {
+            setCoverStatus(`Cover images were not saved: ${error.message}`, 'danger');
+            submitButtons.forEach(button => button.disabled = false);
+            return false;
+        }
+    }
+
+    const comicEditForm = document.querySelector('form[method="POST"][enctype="multipart/form-data"]');
+    if (comicEditForm) {
+        comicEditForm.addEventListener('submit', async function(event) {
+            const inputs = ensureCoverHiddenInputs();
+            if (inputs.coversUpdatedInput.value !== '1') {
+                return;
+            }
+
+            event.preventDefault();
+            if (await uploadCoverVariantsBeforeSave()) {
+                // WTForms renders the save control with name="submit", which
+                // shadows comicEditForm.submit. Invoke the native method
+                // directly so the metadata form is submitted after covers.
+                HTMLFormElement.prototype.submit.call(comicEditForm);
+            }
+        });
+    }
+
+    (function initStoredCoversFromServer() {
+        const initialStoredCovers = {{ comic.get_all_covers()|tojson }};
+        {% if comic.has_cover_image() %}
+        const primaryCoverUrl = '{{ url_for('comics.serve_cover_image', id=comic.id) }}';
+        {% else %}
+        const primaryCoverUrl = null;
+        {% endif %}
+
+        if (!initialStoredCovers.length) {
+            return;
+        }
+
+        const variants = initialStoredCovers.map((cover, index) => ({
+            blob_data: cover.blob_data,
+            mime_type: cover.mime_type || 'image/jpeg',
+            label: cover.label || (index === 0 ? 'Primary Cover' : `Cover ${index + 1}`),
+            preview_url: index === 0 ? primaryCoverUrl : null,
+        }));
+
+        setStoredCoverVariants(variants, false);
+    })();
+    {% endif %}
 });
 </script>
 {% endblock %}

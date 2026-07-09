@@ -26,7 +26,24 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
-    dark_mode_preference = db.Column(db.Boolean, default=False)  # Dark mode preference
+    is_admin = db.Column(db.Boolean, default=False, nullable=False)
+    dark_mode_preference = db.Column(db.Boolean, default=False)  # Legacy; synced from preferred_theme
+    preferred_theme = db.Column(db.String(10), default='system', nullable=False)  # light, dark, system
+
+    THEME_CHOICES = ('light', 'dark', 'system')
+
+    def get_preferred_theme(self):
+        """Return validated theme preference."""
+        theme = (self.preferred_theme or 'system').lower()
+        return theme if theme in self.THEME_CHOICES else 'system'
+
+    def set_preferred_theme(self, theme):
+        """Set theme preference and keep legacy column in sync."""
+        theme = (theme or 'system').lower()
+        if theme not in self.THEME_CHOICES:
+            theme = 'system'
+        self.preferred_theme = theme
+        self.dark_mode_preference = theme == 'dark'
     
     # Password reset fields
     reset_token = db.Column(db.String(100), unique=True, nullable=True)
@@ -81,6 +98,7 @@ class Series(db.Model):
     publisher = db.Column(db.String(100))
     date_range = db.Column(db.String(200))
     notes = db.Column(db.Text)
+    comicvine_volume_id = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     issues = db.relationship('SeriesIssue', backref='series', cascade='all, delete-orphan', lazy=True)
@@ -116,6 +134,7 @@ class SeriesIssue(db.Model):
     writer = db.Column(db.String(200))
     artist = db.Column(db.String(200))
     story_arc = db.Column(db.String(200))
+    comicvine_issue_id = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -149,6 +168,17 @@ class Comic(db.Model):
     issue_number = db.Column(db.String(20), nullable=False)
     publisher = db.Column(db.String(100), nullable=False)
     characters = db.Column(db.Text)  # Comma-separated list of characters
+    writer = db.Column(db.Text)
+    artist = db.Column(db.Text)
+    colorist = db.Column(db.String(500))
+    letterer = db.Column(db.String(500))
+    editor = db.Column(db.String(500))
+    cover_artist = db.Column(db.String(500))
+    teams = db.Column(db.Text)
+    story_arc = db.Column(db.String(500))
+    description = db.Column(db.Text)  # ComicVine synopsis / deck
+    comicvine_issue_id = db.Column(db.Integer, nullable=True)
+    comicvine_url = db.Column(db.String(500))
     genre = db.Column(db.String(100))
     release_date = db.Column(db.Date)
     upc = db.Column(db.String(20))  # Universal Product Code (12 digits)
@@ -158,13 +188,22 @@ class Comic(db.Model):
     notes = db.Column(db.Text)
     cover_image = db.Column(db.LargeBinary)  # BLOB storage for primary cover image
     cover_image_mime = db.Column(db.String(100))  # MIME type of the image
-    additional_covers = db.Column(db.Text)  # JSON string of additional cover images with BLOB data
+    # Retained for migration compatibility. New alternate covers live in
+    # ComicCover rows so adding a variant does not rewrite one large JSON blob.
+    additional_covers = db.Column(db.Text)
     is_wishlist = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Foreign key to user
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    cover_variants = db.relationship(
+        'ComicCover',
+        backref='comic',
+        lazy='select',
+        cascade='all, delete-orphan',
+        order_by='ComicCover.position',
+    )
     
     def get_characters_list(self):
         """Return characters as a list."""
@@ -190,22 +229,39 @@ class Comic(db.Model):
         return "Unknown"
     
     def get_additional_covers(self):
-        """Return additional covers as a list of dictionaries with BLOB data."""
-        import json
-        if self.additional_covers:
-            try:
-                return json.loads(self.additional_covers)
-            except (json.JSONDecodeError, TypeError):
-                return []
-        return []
+        """Return alternate covers as Base64 dictionaries for the UI."""
+        import base64
+        return [{
+            'blob_data': base64.b64encode(cover.image_data).decode('utf-8'),
+            'mime_type': cover.mime_type or 'image/jpeg',
+            'label': cover.label or 'Cover',
+            'is_primary': False,
+        } for cover in self.cover_variants]
     
     def set_additional_covers(self, covers_list):
-        """Set additional covers from a list of dictionaries with BLOB data."""
-        import json
-        if covers_list:
-            self.additional_covers = json.dumps(covers_list)
-        else:
-            self.additional_covers = None
+        """Replace alternate cover rows from Base64 dictionaries."""
+        import base64
+        import binascii
+
+        self.cover_variants.clear()
+        # Flush deletions before reusing positions. This matters on SQLite,
+        # where inserting a replacement at position 1 can otherwise conflict
+        # with the row scheduled for deletion at that same position.
+        if self.id is not None:
+            db.session.flush()
+        for position, cover in enumerate(covers_list or [], start=1):
+            try:
+                image_data = base64.b64decode(cover.get('blob_data', ''), validate=True)
+            except (ValueError, TypeError, binascii.Error):
+                continue
+            if image_data:
+                self.cover_variants.append(ComicCover(
+                    image_data=image_data,
+                    mime_type=(cover.get('mime_type') or 'image/jpeg')[:100],
+                    label=(cover.get('label') or f'Cover {position}')[:200],
+                    position=position,
+                ))
+        self.additional_covers = None
     
     def get_all_covers(self):
         """Return all covers including the primary cover with BLOB data."""
@@ -232,3 +288,19 @@ class Comic(db.Model):
     
     def __repr__(self):
         return f'<Comic {self.title} #{self.issue_number}>'
+
+
+class ComicCover(db.Model):
+    """An alternate cover image belonging to a comic."""
+    __tablename__ = 'comic_cover'
+    __table_args__ = (
+        db.UniqueConstraint('comic_id', 'position', name='uq_comic_cover_position'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    comic_id = db.Column(db.Integer, db.ForeignKey('comic.id'), nullable=False, index=True)
+    image_data = db.Column(db.LargeBinary, nullable=False)
+    mime_type = db.Column(db.String(100), nullable=False, default='image/jpeg')
+    label = db.Column(db.String(200), nullable=False, default='Cover')
+    position = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

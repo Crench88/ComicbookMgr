@@ -5,1900 +5,344 @@ Handles comic book CRUD operations, search, and filtering.
 
 import os
 import re
-import time
 import requests
-from concurrent.futures import ThreadPoolExecutor
+import time
 from datetime import datetime
-from threading import Lock
-from flask import Blueprint, render_template, redirect, url_for, flash, request, send_file, jsonify, current_app
+from io import BytesIO
+from flask import Blueprint, render_template, redirect, url_for, flash, request, send_file, jsonify, current_app, make_response
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from PIL import Image
+from sqlalchemy import func
 from . import db
-from .models import Comic, Series, SeriesIssue
-from .forms import ComicForm, SearchForm
-
-# ---------------------------------------------------------------------------
-# ComicVine API client
-# ---------------------------------------------------------------------------
-# Design goals:
-#   * Keep search fast: at most 1-3 HTTP calls per user query.
-#   * Never fetch variant covers during search (variant lookup is opt-in,
-#     served by /comics/comicvine/issue/<id>/covers after the user picks
-#     a result). The previous implementation fanned out into 100+ requests
-#     and frequently triggered ComicVine's ~1 req/sec rate limit.
-#   * Use ComicVine's structured filters (volume + issue_number, year-aware
-#     volume scoring) instead of looping per-volume API calls.
-#   * Accept a ComicVine URL or 4000-NNNNN identifier as a shortcut, since
-#     that bypasses search entirely and is always accurate.
-
-COMICVINE_BASE_URL = "https://comicvine.gamespot.com/api"
-COMICVINE_HEADERS = {
-    'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager) Python/3.x'
-}
-COMICVINE_TIMEOUT = 8
-
-# ComicVine resource prefixes (their public id scheme).
-_ISSUE_PREFIX = '4000-'
-_VOLUME_PREFIX = '4050-'
-
-# Field list shared by all issue-returning calls. Keep this tight to limit
-# response size; we deliberately do NOT request associated_images here
-# (those are fetched lazily by the on-demand covers endpoint).
-_ISSUE_FIELDS = (
-    'id,name,issue_number,publisher,character_credits,deck,'
-    'store_date,cover_date,image,volume,upc'
+from .models import Comic, ComicCover, Series, SeriesIssue
+from .forms import ComicForm
+from .services.bulk_add import bulk_add_single_issue, parse_issue_ranges
+from .services.comicvine import (
+    fetch_comicvine_issue_covers,
+    lookup_covers_for_form,
+    search_comicvine_volumes,
 )
-_VOLUME_FIELDS = 'id,name,aliases,publisher,start_year,count_of_issues'
-
-# Tiny in-process TTL cache. Search responses change rarely and the same
-# query is often re-issued (debounced UI, retried calls, cover lookups).
-_CV_CACHE_TTL_SECONDS = 300  # 5 minutes for searches
-_CV_COVER_TTL_SECONDS = 3600  # 1 hour for cover lookups (rarely change)
-_cv_cache: dict = {}
-_cv_cache_lock = Lock()
-
-
-def _cache_get(key):
-    with _cv_cache_lock:
-        item = _cv_cache.get(key)
-        if not item:
-            return None
-        expires_at, value = item
-        if expires_at < time.time():
-            _cv_cache.pop(key, None)
-            return None
-        return value
-
-
-def _cache_set(key, value, ttl=_CV_CACHE_TTL_SECONDS):
-    with _cv_cache_lock:
-        _cv_cache[key] = (time.time() + ttl, value)
-
-
-def _cv_get(path, params, api_key, ttl=_CV_CACHE_TTL_SECONDS):
-    """Cached GET against the ComicVine API. Returns parsed JSON dict."""
-    full_params = {**params, 'api_key': api_key, 'format': 'json'}
-    cache_key = (path, tuple(sorted(full_params.items())))
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
-    url = f"{COMICVINE_BASE_URL}/{path.lstrip('/')}"
-    response = requests.get(
-        url, params=full_params, headers=COMICVINE_HEADERS, timeout=COMICVINE_TIMEOUT
-    )
-    response.raise_for_status()
-    data = response.json()
-    _cache_set(cache_key, data, ttl)
-    return data
-
-
-def normalize_issue_number(value: str) -> str:
-    """Normalize issue numbers for comparison (strips leading zeros)."""
-    value = (value or '').strip()
-    if not value:
-        return ''
-    if not value.isdigit():
-        return value.lower()
-    normalized = value.lstrip('0')
-    return normalized if normalized else '0'
-
-
-# Patterns for the "paste a ComicVine URL or id" shortcut.
-_ISSUE_ID_PATTERNS = [
-    re.compile(r'comicvine\.gamespot\.com/[^\s?#]*?/4000-(\d+)', re.IGNORECASE),
-    re.compile(r'\b4000-(\d+)\b'),
-    re.compile(r'^\s*cv:?(\d+)\s*$', re.IGNORECASE),
-]
-
-
-def parse_comicvine_issue_id(query: str):
-    """Return the integer issue id if `query` looks like a ComicVine URL or ref."""
-    if not query:
-        return None
-    for pat in _ISSUE_ID_PATTERNS:
-        m = pat.search(query)
-        if m:
-            try:
-                return int(m.group(1))
-            except (TypeError, ValueError):
-                continue
-    return None
-
-
-_ISSUE_TRAILING_RE = re.compile(r'#?\s*(\d+(?:\.\d+)?)\s*$')
-_YEAR_RE = re.compile(r'\b(19\d{2}|20\d{2})\b')
-_VOLUME_HINT_RE = re.compile(r'(?:^|\s)(?:vol\.?|volume)\s*(\d+)\b', re.IGNORECASE)
-
-
-def parse_query(query: str) -> dict:
-    """Parse a free-text query into structured fields.
-
-    "Star Wars 1977 #1"           -> series=Star Wars, year=1977, issue=1
-    "Amazing Spider-Man Vol 2 15" -> series=Amazing Spider-Man, volume_hint=2, issue=15
-    """
-    text = (query or '').strip()
-    issue = year = volume_hint = None
-    if not text:
-        return {'series': '', 'issue': None, 'year': None,
-                'volume_hint': None, 'raw': ''}
-
-    m = _ISSUE_TRAILING_RE.search(text)
-    if m:
-        issue = m.group(1)
-        text = text[:m.start()].rstrip()
-
-    m = _VOLUME_HINT_RE.search(text)
-    if m:
-        volume_hint = m.group(1)
-        text = (text[:m.start()] + ' ' + text[m.end():]).strip()
-
-    m = _YEAR_RE.search(text)
-    if m:
-        year = int(m.group(1))
-        text = (text[:m.start()] + ' ' + text[m.end():]).strip()
-
-    series = re.sub(r'\s+', ' ', text).strip()
-    return {
-        'series': series,
-        'issue': issue,
-        'year': year,
-        'volume_hint': volume_hint,
-        'raw': (query or '').strip(),
-    }
-
-
-def _format_issue_lightweight(result: dict, series_hint: str = '') -> dict | None:
-    """Convert a ComicVine /issue/ payload to our internal result dict.
-
-    Deliberately does NOT fetch variant covers. The result advertises
-    `comicvine_id` and the front-end calls /comics/comicvine/issue/<id>/covers
-    only when the user actually picks the result.
-    """
-    if not result or not result.get('id'):
-        return None
-
-    volume_info = result.get('volume') or {}
-    volume_name = ''
-    volume_id = None
-    volume_start_year = ''
-    if isinstance(volume_info, dict):
-        volume_name = (volume_info.get('name') or '').strip()
-        volume_id = volume_info.get('id')
-        volume_start_year = (volume_info.get('start_year') or '').strip()
-
-    publisher_name = ''
-    publisher_data = result.get('publisher')
-    if isinstance(publisher_data, dict):
-        publisher_name = publisher_data.get('name', '') or ''
-
-    characters = ''
-    character_credits = result.get('character_credits') or []
-    if character_credits:
-        characters = ', '.join(
-            c.get('name', '').strip() for c in character_credits if c.get('name')
-        )
-
-    image_data = result.get('image') or {}
-    primary_url = ''
-    if isinstance(image_data, dict):
-        primary_url = (
-            image_data.get('medium_url')
-            or image_data.get('super_url')
-            or image_data.get('original_url')
-            or ''
-        )
-
-    issue_number = (result.get('issue_number') or '').strip()
-    issue_name = (result.get('name') or '').strip()
-    series_display = volume_name or series_hint or 'Unknown Series'
-
-    return {
-        'id': result.get('id'),
-        'comicvine_id': result.get('id'),
-        'title': issue_name or volume_name or 'Unknown Title',
-        'series': series_display,
-        'issue_title': issue_name or '',
-        'issue_number': issue_number,
-        'publisher': publisher_name,
-        'characters': characters,
-        'genre': 'Comic',
-        'release_date': result.get('store_date') or result.get('cover_date') or '',
-        'cover_date': result.get('cover_date') or '',
-        'description': result.get('deck') or '',
-        'cover_image_url': primary_url,
-        'cover_images': [],  # populated lazily via the covers endpoint
-        'volume': volume_name,
-        'volume_start_year': volume_start_year,
-        '_volume_id': volume_id,  # internal, used by _enrich_with_volume_meta
-        'upc': result.get('upc') or '',
-        'isbn': '',
-        'source': 'ComicVine',
-        'has_variants_endpoint': True,
-    }
-
-
-def fetch_issue_by_id(issue_id: int, api_key: str):
-    """One-or-two API calls to fetch a specific issue by its ComicVine id.
-
-    A second /volume/ call is made only when the issue payload is missing
-    publisher or volume start year (which it almost always is).
-    """
-    try:
-        data = _cv_get(
-            f"issue/{_ISSUE_PREFIX}{issue_id}/",
-            {'field_list': _ISSUE_FIELDS},
-            api_key,
-        )
-    except requests.RequestException as exc:
-        print(f"[ComicVine] direct issue fetch failed for {issue_id}: {exc}")
-        return None
-    formatted = _format_issue_lightweight(data.get('results') or {})
-    if formatted:
-        _enrich_with_volume_meta([formatted], api_key)
-    return formatted
-
-
-def _score_volume(vol: dict, series_lower: str, year) -> int:
-    """Rank a /search/?resources=volume hit against the parsed query."""
-    name = (vol.get('name') or '').lower()
-    aliases = (vol.get('aliases') or '').lower()
-    start_year = (vol.get('start_year') or '').strip()
-    score = 0
-    if not series_lower:
-        return score
-    if name == series_lower:
-        score += 100
-    elif series_lower in name:
-        score += 40
-    if series_lower in aliases:
-        score += 25
-    if year and start_year == str(year):
-        score += 60
-    elif year and start_year.isdigit() and abs(int(start_year) - year) <= 1:
-        score += 20
-    return score
-
-
-def _find_volume_ids(series: str, year, api_key: str, limit: int = 5) -> list:
-    """Return the top N matching ComicVine volume ids for `series` (+ optional year)."""
-    if not series:
-        return []
-    try:
-        data = _cv_get(
-            'search/',
-            {
-                'query': series,
-                'resources': 'volume',
-                'field_list': _VOLUME_FIELDS,
-                'limit': 30,
-            },
-            api_key,
-        )
-    except requests.RequestException as exc:
-        print(f"[ComicVine] volume search failed for {series!r}: {exc}")
-        return []
-    candidates = data.get('results') or []
-    series_lower = series.lower()
-    scored = [(vol, _score_volume(vol, series_lower, year)) for vol in candidates]
-    scored = [pair for pair in scored if pair[1] > 0]
-    scored.sort(key=lambda pair: pair[1], reverse=True)
-    return [vol.get('id') for vol, _ in scored[:limit] if vol.get('id')]
-
-
-def _fetch_issues_for_one_volume(volume_id, issue_number: str, api_key: str) -> list:
-    """One /issues/ call: filter=volume:<id>,issue_number:<n>. Two gotchas with
-    ComicVine's `filter` parameter:
-      * It does NOT support pipe-OR for the volume key, so each candidate
-        volume must be queried separately (we run them in parallel).
-      * The volume value must be the bare numeric id; the `4050-` URL prefix
-        is interpreted as `volume:4050` (the dash acts as a separator) and
-        silently returns wrong results.
-    """
-    filter_value = f"volume:{volume_id}"
-    if issue_number:
-        filter_value = f"{filter_value},issue_number:{issue_number}"
-    try:
-        data = _cv_get(
-            'issues/',
-            {
-                'filter': filter_value,
-                'field_list': _ISSUE_FIELDS,
-                'limit': 20,
-            },
-            api_key,
-        )
-    except requests.RequestException as exc:
-        print(f"[ComicVine] issues filter call failed ({filter_value}): {exc}")
-        return []
-    return data.get('results') or []
-
-
-def _fetch_issues_for_volumes(volume_ids: list, issue_number: str, api_key: str) -> list:
-    """Fan out per-volume /issues/ calls in parallel and concatenate results.
-
-    With max_workers=5 and ComicVine response times of ~300-500ms, this returns
-    in roughly the time of a single call.
-    """
-    if not volume_ids:
-        return []
-    if len(volume_ids) == 1:
-        return _fetch_issues_for_one_volume(volume_ids[0], issue_number, api_key)
-    issues = []
-    with ThreadPoolExecutor(max_workers=min(5, len(volume_ids))) as pool:
-        for batch in pool.map(
-            lambda vid: _fetch_issues_for_one_volume(vid, issue_number, api_key),
-            volume_ids,
-        ):
-            issues.extend(batch)
-    return issues
-
-
-def _fetch_volume_meta(volume_id, api_key: str) -> dict:
-    """Cached /volume/<id>/ lookup returning {name, start_year, publisher_name}.
-
-    ComicVine's /issue/ response embeds the volume's id and name but not
-    its start_year or publisher, so we hit /volume/ once per unique volume
-    to enrich results. Results are cached for the volume TTL (1 hour) since
-    volume metadata virtually never changes.
-    """
-    if not volume_id or not api_key:
-        return {}
-    try:
-        data = _cv_get(
-            f"volume/{_VOLUME_PREFIX}{volume_id}/",
-            {'field_list': 'id,name,start_year,publisher'},
-            api_key,
-            ttl=_CV_COVER_TTL_SECONDS,
-        )
-    except requests.RequestException as exc:
-        print(f"[ComicVine] volume {volume_id} meta lookup failed: {exc}")
-        return {}
-    result = data.get('results') or {}
-    publisher = result.get('publisher') or {}
-    return {
-        'name': (result.get('name') or '').strip(),
-        'start_year': (result.get('start_year') or '').strip(),
-        'publisher_name': (publisher.get('name') or '').strip() if isinstance(publisher, dict) else '',
-    }
-
-
-def _enrich_with_volume_meta(results: list, api_key: str) -> None:
-    """In-place: fill in volume_start_year and publisher when missing, using one
-    cached /volume/ call per unique volume id."""
-    if not results or not api_key:
-        return
-    needed = {}
-    for r in results:
-        if r.get('volume_start_year') and r.get('publisher'):
-            continue
-        # The result's underlying volume id is stored on the formatted dict
-        # under '_volume_id' (added by _format_issue_lightweight).
-        vid = r.get('_volume_id')
-        if vid:
-            needed.setdefault(vid, []).append(r)
-    if not needed:
-        return
-    # Parallel fetch (one call per unique volume).
-    with ThreadPoolExecutor(max_workers=min(5, len(needed))) as pool:
-        meta_by_vid = dict(zip(
-            needed.keys(),
-            pool.map(lambda vid: _fetch_volume_meta(vid, api_key), needed.keys()),
-        ))
-    for vid, rs in needed.items():
-        meta = meta_by_vid.get(vid) or {}
-        for r in rs:
-            if not r.get('volume_start_year'):
-                r['volume_start_year'] = meta.get('start_year', '')
-            if not r.get('publisher'):
-                r['publisher'] = meta.get('publisher_name', '')
-            if not r.get('series') or r.get('series') == 'Unknown Series':
-                if meta.get('name'):
-                    r['series'] = meta['name']
-                    r['volume'] = meta['name']
-
-
-def _freetext_issue_search(query: str, api_key: str, limit: int = 20) -> list:
-    """Single fallback /search/?resources=issue call."""
-    if not query:
-        return []
-    try:
-        data = _cv_get(
-            'search/',
-            {
-                'query': query,
-                'resources': 'issue',
-                'field_list': _ISSUE_FIELDS,
-                'limit': limit,
-            },
-            api_key,
-        )
-    except requests.RequestException as exc:
-        print(f"[ComicVine] freetext search failed for {query!r}: {exc}")
-        return []
-    return data.get('results') or []
-
-
-def search_comicvine_api(query: str, api_key: str) -> list:
-    """Fast ComicVine search. Returns a list of formatted result dicts.
-
-    Strategy (in order):
-      1. If `query` is a ComicVine URL or 4000-NNNNN ref, do a direct lookup.
-         -> 1 API call, sub-second.
-      2. If we can parse a series + issue number, find candidate volumes
-         (1 call, filtered by year when present) and fetch matching issues
-         across all candidate volumes in a single /issues/ call.
-         -> 2 API calls.
-      3. Otherwise, fall back to a single /search/?resources=issue call.
-         -> 1 API call.
-    """
-    if not api_key:
-        print("[ComicVine] No API key configured; skipping live search.")
-        return []
-
-    query = (query or '').strip()
-    if not query:
-        return []
-
-    issue_id = parse_comicvine_issue_id(query)
-    if issue_id:
-        print(f"[ComicVine] direct lookup for issue id {issue_id}")
-        formatted = fetch_issue_by_id(issue_id, api_key)
-        return [formatted] if formatted else []
-
-    parsed = parse_query(query)
-    print(f"[ComicVine] parsed query -> {parsed}")
-
-    results = []
-    seen_ids = set()
-    issue_norm = normalize_issue_number(parsed['issue']) if parsed['issue'] else ''
-
-    def _push(raw_issue):
-        formatted = _format_issue_lightweight(raw_issue, parsed['series'])
-        if not formatted:
-            return
-        rid = formatted['id']
-        if rid in seen_ids:
-            return
-        if issue_norm and normalize_issue_number(formatted['issue_number']) != issue_norm:
-            return
-        seen_ids.add(rid)
-        results.append(formatted)
-
-    if parsed['series'] and parsed['issue']:
-        volume_ids = _find_volume_ids(
-            parsed['series'], parsed['year'], api_key, limit=5
-        )
-        if volume_ids:
-            for issue in _fetch_issues_for_volumes(volume_ids, parsed['issue'], api_key):
-                _push(issue)
-
-    if not results:
-        fallback_term = parsed['raw'] or parsed['series']
-        for issue in _freetext_issue_search(fallback_term, api_key, limit=20):
-            _push(issue)
-
-    # Enrich missing publisher / volume_start_year with one /volume/ call per
-    # unique volume (parallel, cached). Without this, issue payloads alone
-    # frequently lack publisher and never include start_year.
-    _enrich_with_volume_meta(results, api_key)
-
-    parsed_series_lower = parsed['series'].lower()
-    parsed_year = parsed['year']
-
-    def _rank(r):
-        start_year = r.get('volume_start_year') or ''
-        year_match = 0
-        if parsed_year and start_year == str(parsed_year):
-            year_match = 2
-        elif parsed_year and start_year.isdigit() and abs(int(start_year) - parsed_year) <= 1:
-            year_match = 1
-        series_low = (r.get('series') or '').lower()
-        name_match = 0
-        if parsed_series_lower and parsed_series_lower == series_low:
-            name_match = 2
-        elif parsed_series_lower and parsed_series_lower in series_low:
-            name_match = 1
-        return (-year_match, -name_match)
-
-    results.sort(key=_rank)
-    print(f"[ComicVine] returning {len(results)} results")
-    return results
-
-
-def fetch_comicvine_issue_covers(issue_id: int, api_key: str) -> list:
-    """Return the real cover images for a single ComicVine issue.
-
-    Used by the on-demand /comics/comicvine/issue/<id>/covers route after
-    the user picks a search result, so the search itself stays fast.
-    """
-    cache_key = ('issue_covers', int(issue_id))
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
-
-    covers = []
-    seen = set()
-
-    def _add(url, label):
-        if not url or url in seen:
-            return
-        seen.add(url)
-        covers.append({'url': url, 'label': label or 'Cover', 'size': 'medium'})
-
-    if api_key:
-        try:
-            data = _cv_get(
-                f"issue/{_ISSUE_PREFIX}{issue_id}/",
-                {'field_list': 'id,name,issue_number,image,associated_images,volume'},
-                api_key,
-                ttl=_CV_COVER_TTL_SECONDS,
-            )
-            result = data.get('results') or {}
-            primary = result.get('image') or {}
-            _add(
-                primary.get('medium_url') or primary.get('super_url')
-                or primary.get('original_url') or '',
-                'Regular Cover',
-            )
-            for assoc in (result.get('associated_images') or []):
-                caption = (assoc.get('caption') or '').strip() or f'Variant Cover {len(covers)}'
-                _add(assoc.get('original_url') or assoc.get('image') or '', caption)
-        except requests.RequestException as exc:
-            print(f"[ComicVine] issue/{issue_id} cover fetch failed: {exc}")
-
-    if len(covers) <= 1:
-        for cov in _scrape_issue_page_covers(issue_id):
-            _add(cov['url'], cov['label'])
-
-    _cache_set(cache_key, covers, ttl=_CV_COVER_TTL_SECONDS)
-    return covers
-
-
-def _scrape_issue_page_covers(issue_id: int) -> list:
-    """Best-effort scrape of ComicVine's public issue page for cover images."""
-    try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        return []
-    web_url = f"https://comicvine.gamespot.com/issue/{_ISSUE_PREFIX}{issue_id}/"
-    try:
-        response = requests.get(
-            web_url,
-            headers={'User-Agent': 'Mozilla/5.0 (compatible; ComicBookManager/1.0)'},
-            timeout=10,
-        )
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        print(f"[ComicVine] issue page scrape failed for {issue_id}: {exc}")
-        return []
-
-    soup = BeautifulSoup(response.content, 'html.parser')
-    found = []
-    seen = set()
-    for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or ''
-        if 'comicvine.gamespot.com/a/uploads/' not in src:
-            continue
-        if any(skip in src for skip in ('avatar', 'square_small', 'square_avatars')):
-            continue
-        if src in seen:
-            continue
-        seen.add(src)
-        label = (img.get('alt') or '').strip() or f'Cover {len(found) + 1}'
-        found.append({'url': src, 'label': label})
-        if len(found) >= 20:
-            break
-    return found
-
+from .services.local_catalog import search_local_series_volumes
+from .services.search_orchestrator import run_comic_search
 
 comics_bp = Blueprint('comics', __name__)
+
+SERIES_PER_PAGE = 50
+COMICS_PER_PAGE = 36
+
+
+def _parse_comicvine_issue_id(value):
+    if value in (None, ''):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_form_cover_updates(comic, form):
+    """Apply cover image changes from the comic form POST data."""
+    import base64
+    import json
+
+    fetched_cover_blob = request.form.get('fetched_cover_blob')
+    fetched_cover_mime = request.form.get('fetched_cover_mime')
+    additional_covers = request.form.get('additional_covers')
+    covers_updated = request.form.get('covers_updated') == '1'
+
+    if fetched_cover_blob:
+        try:
+            blob_data = base64.b64decode(fetched_cover_blob)
+            comic.cover_image = blob_data
+            comic.cover_image_mime = fetched_cover_mime or 'image/jpeg'
+        except Exception as e:
+            print(f"Error decoding BLOB data: {e}")
+            flash('Error processing cover image. Please try again.', 'danger')
+            return
+
+        if covers_updated:
+            if additional_covers and additional_covers.strip():
+                try:
+                    comic.set_additional_covers(json.loads(additional_covers))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            else:
+                comic.set_additional_covers([])
+        elif additional_covers:
+            try:
+                comic.set_additional_covers(json.loads(additional_covers))
+            except (json.JSONDecodeError, TypeError):
+                pass
+    elif form.cover_image.data and hasattr(form.cover_image.data, 'filename'):
+        image_data = save_cover_image(form.cover_image.data)
+        if image_data:
+            comic.cover_image = image_data['blob_data']
+            comic.cover_image_mime = image_data['mime_type']
+
+
+def _na_publishers_only_from_request() -> bool:
+    """Default True: limit ComicVine results to major North American publishers."""
+    val = request.args.get('na_publishers_only', '1').strip().lower()
+    return val not in ('0', 'false', 'no', 'off')
+
+def _safe_redirect_target(target: str) -> str | None:
+    """Return a same-origin relative redirect path, or None if unsafe."""
+    if not target:
+        return None
+    from urllib.parse import urlparse, urljoin
+    ref_url = urlparse(request.host_url)
+    test_url = urlparse(urljoin(request.host_url, target))
+    if test_url.scheme not in ('', 'http', 'https'):
+        return None
+    if test_url.netloc and test_url.netloc != ref_url.netloc:
+        return None
+    if not test_url.path.startswith('/'):
+        return None
+    if '..' in test_url.path:
+        return None
+    return test_url.path + (f'?{test_url.query}' if test_url.query else '')
+
+
+def _collection_return_url(comic, target: str = '') -> str:
+    """Return a safe collection URL scoped to the comic's actual series."""
+    from urllib.parse import parse_qsl, urlencode, urlparse
+
+    safe_target = _safe_redirect_target(target)
+    if not safe_target:
+        return url_for('comics.index', series=(comic.series or 'Unknown Series'))
+
+    parsed = urlparse(safe_target)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query['series'] = comic.series or 'Unknown Series'
+    # A prior series can have a different number of issue pages.
+    query['comic_page'] = '1'
+    return parsed.path + '?' + urlencode(query)
+
+
+def _apply_comic_filters(query, search_query='', publisher_filter='',
+                         condition_filter='', genre_filter='', wishlist_only=False):
+    """Apply shared search/filter criteria to a Comic query."""
+    if search_query:
+        ilike = f'%{search_query}%'
+        query = query.filter(
+            db.or_(
+                Comic.title.ilike(ilike),
+                Comic.series.ilike(ilike),
+                Comic.issue_title.ilike(ilike),
+                Comic.issue_number.ilike(ilike),
+                Comic.characters.ilike(ilike),
+                Comic.writer.ilike(ilike),
+                Comic.artist.ilike(ilike),
+                Comic.story_arc.ilike(ilike),
+                Comic.description.ilike(ilike),
+                Comic.publisher.ilike(ilike),
+                Comic.upc.ilike(ilike),
+                Comic.isbn.ilike(ilike),
+            )
+        )
+
+    if publisher_filter:
+        query = query.filter(Comic.publisher == publisher_filter)
+
+    if condition_filter:
+        query = query.filter(Comic.condition == condition_filter)
+
+    if genre_filter:
+        query = query.filter(Comic.genre.ilike(f'%{genre_filter}%'))
+
+    if wishlist_only:
+        query = query.filter(Comic.is_wishlist == True)
+
+    return query
+
+
+def _series_label(comic_series):
+    """Normalize series name for grouping and display."""
+    if comic_series and str(comic_series).strip():
+        return str(comic_series).strip()
+    return 'Unknown Series'
+
+
+def _issue_sort_key(comic):
+    """Sort comics within a series by issue number (numeric first, then suffix)."""
+    issue = (comic.issue_number or '').strip()
+    if not issue:
+        return (float('inf'), '', comic.title.lower())
+
+    match = re.match(r'(\d+(?:\.\d+)?)\s*(.*)', issue)
+    if match:
+        numeric_part = float(match.group(1))
+        suffix = (match.group(2) or '').strip().lower()
+        return (numeric_part, suffix, comic.title.lower())
+
+    return (float('inf'), issue.lower(), comic.title.lower())
+
+
+def _annotate_duplicates(comics_list):
+    """Attach duplicate_index / duplicate_total for copies of the same issue."""
+    issue_counts = {}
+    for comic in comics_list:
+        key = (comic.issue_number, comic.title or '')
+        issue_counts[key] = issue_counts.get(key, 0) + 1
+
+    issue_occurrence = {}
+    for comic in comics_list:
+        key = (comic.issue_number, comic.title or '')
+        total = issue_counts.get(key, 1)
+        if total > 1:
+            issue_occurrence[key] = issue_occurrence.get(key, 0) + 1
+            comic.duplicate_index = issue_occurrence[key]
+            comic.duplicate_total = total
+        else:
+            comic.duplicate_index = None
+            comic.duplicate_total = 1
+
+
+def _filter_series_query(user_id, search_query='', publisher_filter='',
+                         condition_filter='', genre_filter='', wishlist_only=False):
+    """Return a query of (series_name, issue_count) rows for the filtered collection."""
+    series_name = func.coalesce(
+        func.nullif(func.trim(Comic.series), ''),
+        'Unknown Series',
+    ).label('series_name')
+
+    query = db.session.query(
+        series_name,
+        func.count(Comic.id).label('issue_count'),
+    ).filter(Comic.user_id == user_id)
+
+    query = _apply_comic_filters(
+        query, search_query, publisher_filter,
+        condition_filter, genre_filter, wishlist_only,
+    )
+
+    return query.group_by(series_name).order_by(series_name.asc())
+
+
+def _comics_for_series_query(user_id, series_name, search_query='', publisher_filter='',
+                             condition_filter='', genre_filter='', wishlist_only=False):
+    """Return a Comic query scoped to one series with filters applied."""
+    query = Comic.query.filter_by(user_id=user_id)
+    query = _apply_comic_filters(
+        query, search_query, publisher_filter,
+        condition_filter, genre_filter, wishlist_only,
+    )
+
+    if series_name == 'Unknown Series':
+        query = query.filter(db.or_(Comic.series.is_(None), func.trim(Comic.series) == ''))
+    else:
+        query = query.filter(Comic.series == series_name)
+
+    return query
+
+
+def _serialize_comic_for_grid(comic):
+    """JSON-friendly comic payload for the collection grid."""
+    return {
+        'id': comic.id,
+        'title': comic.title,
+        'issue_number': comic.issue_number,
+        'publisher': comic.publisher or 'Unknown',
+        'condition': comic.condition,
+        'estimated_value': comic.get_formatted_value() if comic.estimated_value else None,
+        'is_wishlist': comic.is_wishlist,
+        'has_cover': comic.has_cover_image(),
+        'cover_url': url_for('comics.serve_cover_image', id=comic.id),
+        'show_url': url_for('comics.show', id=comic.id),
+        'edit_url': url_for('comics.edit', id=comic.id),
+        'duplicate_index': getattr(comic, 'duplicate_index', None),
+        'duplicate_total': getattr(comic, 'duplicate_total', 1),
+        'release_date': comic.release_date.strftime('%Y-%m-%d') if comic.release_date else None,
+    }
 
 
 @comics_bp.route('/comics/comicvine/issue/<int:issue_id>/covers')
 @login_required
 def comicvine_issue_covers(issue_id):
-    """Lazily fetch the cover gallery for a ComicVine issue.
-
-    Front-end calls this only after the user picks a search result, so the
-    search itself never has to fan out into per-result variant lookups.
-    """
+    """Lazily fetch the cover gallery for a ComicVine issue."""
     api_key = current_app.config.get('COMICVINE_API_KEY', '')
     covers = fetch_comicvine_issue_covers(issue_id, api_key)
     return jsonify({'covers': covers, 'issue_id': issue_id})
 
 
-def search_marvel_api(query, api_key, private_key):
-    """Search Marvel Comics API."""
-    import hashlib
-    import time
-    
-    # Marvel API requires timestamp and hash
-    # According to Marvel API docs: hash = md5(ts + privateKey + publicKey)
-    timestamp = str(int(time.time()))
-    hash_input = timestamp + private_key + api_key
-    hash_value = hashlib.md5(hash_input.encode('utf-8')).hexdigest()
-    
-    search_url = "https://gateway.marvel.com/v1/public/comics"
-    
+@comics_bp.route('/comics/comicvine/covers/lookup')
+@login_required
+def comicvine_covers_lookup():
+    """Find ComicVine cover variants for the series/issue on the comic form."""
+    series_name = request.args.get('series_name', '').strip()
+    issue_number = request.args.get('issue_number', '').strip()
+    title = request.args.get('title', '').strip()
+    publisher = request.args.get('publisher', '').strip()
+
+    api_key = current_app.config.get('COMICVINE_API_KEY', '')
+    if not api_key:
+        return jsonify({
+            'error': 'ComicVine API key is not configured. Add COMICVINE_API_KEY to your .env file.',
+            'covers': [],
+        }), 503
+
     try:
-        headers = {
-            'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager; crench88@gmail.com) Python/3.x'
-        }
-        
-        # Parse query for date information
-        import re
-        from datetime import datetime
-        
-        # Extract date patterns from query (order matters - most specific first)
-        date_patterns = [
-            r'(\w+\s+\d{1,2},\s+\d{4})',  # December 15, 2015
-            r'(\w+\s+\d{4})',  # December 2015
-            r'(\d{1,2}/\d{1,2}/\d{4})',  # 12/15/2015
-            r'(\d{4}-\d{2}-\d{2})',  # 2015-12-15
-            r'\b(\d{4})\b',  # Just year (word boundary)
-        ]
-        
-        original_query = query
-        extracted_date = None
-        clean_query = query
-        
-        # Extract date from query
-        for pattern in date_patterns:
-            date_match = re.search(pattern, query, re.IGNORECASE)
-            if date_match:
-                extracted_date = date_match.group(1)
-                clean_query = query.replace(date_match.group(0), '').strip()
-                break
-        
-        # Clean up the query for Marvel API (remove special characters)
-        clean_query = clean_query.replace('#', '').replace('@', '').replace('!', '').replace('?', '')
-        
-        params = {
-            'apikey': api_key,
-            'ts': timestamp,
-            'hash': hash_value,
-            'titleStartsWith': clean_query,
-            'limit': 20,
-            'format': 'comic',
-            'formatType': 'comic'
-        }
-        
-        # Add date filtering if date was extracted
-        if extracted_date:
+        payload = lookup_covers_for_form(
+            series=series_name,
+            issue_number=issue_number,
+            title=title,
+            publisher=publisher,
+            api_key=api_key,
+            na_publishers_only=_na_publishers_only_from_request(),
+        )
+        if payload.get('error') and not payload.get('covers'):
+            return jsonify(payload), 404
+        return jsonify(payload)
+    except requests.RequestException as exc:
+        return jsonify({'error': f'ComicVine lookup failed: {exc}', 'covers': []}), 502
+    except Exception as exc:
+        return jsonify({'error': f'ComicVine lookup failed: {exc}', 'covers': []}), 500
+
+
+@comics_bp.route('/comics/<int:id>/comicvine/refresh')
+@login_required
+def refresh_comicvine_metadata(id):
+    """Re-fetch ComicVine metadata for an existing comic (edit form refresh)."""
+    comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
+    api_key = current_app.config.get('COMICVINE_API_KEY', '')
+    if not api_key:
+        return jsonify({
+            'error': 'ComicVine API key is not configured. Add COMICVINE_API_KEY to your .env file.',
+        }), 503
+
+    try:
+        from .services.comicvine import lookup_issue_metadata_for_refresh
+        payload = lookup_issue_metadata_for_refresh(
+            comicvine_issue_id=comic.comicvine_issue_id,
+            series=comic.series or '',
+            issue_number=comic.issue_number or '',
+            title=comic.title or comic.issue_title or '',
+            publisher=comic.publisher or '',
+            api_key=api_key,
+            na_publishers_only=_na_publishers_only_from_request(),
+            start_year=comic.release_date.year if comic.release_date else None,
+        )
+        if payload.get('error'):
+            return jsonify(payload), 404
+
+        # Use the exact issue matched during refresh so metadata and cover
+        # variants always come from the same ComicVine record.
+        metadata = payload.get('metadata') or {}
+        issue_id = metadata.get('comicvine_id') or metadata.get('id') or comic.comicvine_issue_id
+        if issue_id:
             try:
-                if re.match(r'\w+\s+\d{1,2},\s+\d{4}', extracted_date):
-                    # December 15, 2015 format
-                    date_obj = datetime.strptime(extracted_date, '%B %d, %Y')
-                    year = date_obj.year
-                    month = date_obj.month
-                    day = date_obj.day
-                    # Marvel API uses dateRange parameter
-                    specific_date = f"{year}-{month:02d}-{day:02d}"
-                    params['dateRange'] = f"{specific_date},{specific_date}"
-                elif re.match(r'\w+\s+\d{4}', extracted_date):
-                    # December 2015 format
-                    date_obj = datetime.strptime(extracted_date, '%B %Y')
-                    year = date_obj.year
-                    month = date_obj.month
-                    # Marvel API uses dateRange parameter
-                    start_date = f"{year}-{month:02d}-01"
-                    end_date = f"{year}-{month:02d}-31"
-                    params['dateRange'] = f"{start_date},{end_date}"
-                elif re.match(r'\d{1,2}/\d{1,2}/\d{4}', extracted_date):
-                    # 12/15/2015 format
-                    date_obj = datetime.strptime(extracted_date, '%m/%d/%Y')
-                    year = date_obj.year
-                    month = date_obj.month
-                    day = date_obj.day
-                    # Marvel API uses dateRange parameter
-                    specific_date = f"{year}-{month:02d}-{day:02d}"
-                    params['dateRange'] = f"{specific_date},{specific_date}"
-                elif re.match(r'\d{4}-\d{2}-\d{2}', extracted_date):
-                    # 2015-12-15 format
-                    params['dateRange'] = f"{extracted_date},{extracted_date}"
-                elif re.match(r'\d{4}', extracted_date) and len(extracted_date) == 4:
-                    # Just year format
-                    year = int(extracted_date)
-                    params['dateRange'] = f"{year}-01-01,{year}-12-31"
-            except ValueError:
-                # If date parsing fails, continue without date filter
-                pass
-        
-        print(f"🔍 Marvel API params: {params}")
-        print(f"🔍 Hash Input (timestamp + private_key + public_key): {timestamp + '***' + api_key}")
-        print(f"🔍 Generated Hash: {hash_value}")
-        
-        response = requests.get(search_url, params=params, headers=headers, timeout=10)
-        print(f"📡 Marvel API Response status: {response.status_code}")
-        
-        if response.status_code == 401:
-            print(f"❌ Marvel API Authentication failed. Check your API keys.")
-            print(f"🔑 Public Key: {api_key[:10]}...")
-            print(f"🔑 Private Key: {private_key[:10]}...")
-            print(f"🔍 Full URL: {response.url}")
-            print(f"🔍 Response Text: {response.text[:500]}...")
-            print(f"📋 According to Marvel API docs, check:")
-            print(f"   - API key is valid and not expired")
-            print(f"   - Private key is correct")
-            print(f"   - Hash generation: md5(ts + privateKey + publicKey)")
-            return []
-        elif response.status_code == 409:
-            print(f"❌ Marvel API Error 409: Missing required parameters")
-            print(f"📋 Required: apikey, ts, hash for server-side applications")
-            return []
-        
-        response.raise_for_status()
-        
-        data = response.json()
-        results = []
-        
-        if 'data' in data and 'results' in data['data']:
-            for comic in data['data']['results']:
-                result = {
-                    'id': comic.get('id'),
-                    'title': comic.get('title', ''),
-                    'issue_number': comic.get('issueNumber', ''),
-                    'publisher': 'Marvel Comics',
-                    'characters': ', '.join([char.get('name', '') for char in comic.get('characters', {}).get('items', [])]),
-                    'genre': 'Superhero',
-                    'release_date': comic.get('dates', [{}])[0].get('date', '') if comic.get('dates') else '',
-                    'description': comic.get('description', ''),
-                    'cover_image_url': comic.get('thumbnail', {}).get('path', '') + '.' + comic.get('thumbnail', {}).get('extension', '') if comic.get('thumbnail') else '',
-                    'volume': comic.get('series', {}).get('name', '')
-                }
-                results.append(result)
-        
-        print(f"📚 Marvel API found {len(results)} results")
-        return results
-        
-    except Exception as e:
-        print(f"❌ Marvel API search failed: {e}")
-        return []
+                payload['covers'] = fetch_comicvine_issue_covers(int(issue_id), api_key)
+            except (requests.RequestException, TypeError, ValueError):
+                # Metadata is still useful even when ComicVine's cover image
+                # endpoint is unavailable.
+                payload['covers'] = []
+        return jsonify(payload)
+    except requests.RequestException as exc:
+        return jsonify({'error': f'ComicVine refresh failed: {exc}'}), 502
+    except Exception as exc:
+        return jsonify({'error': f'ComicVine refresh failed: {exc}'}), 500
 
-def search_local_database(query, series_name=None, issue_number=None):
-    """Search locally stored canonical series/issue metadata."""
-    try:
-        filters_applied = []
-        issue_query = SeriesIssue.query.join(Series)
-
-        if series_name:
-            filters_applied.append(f"series_name~{series_name}")
-            series_filter = Series.name.ilike(f'%{series_name}%')
-
-            lowered = series_name.lower()
-            parsed_name = series_name
-            parsed_volume = None
-
-            import re
-            vol_match = re.search(r'(.*?)(?:\s+[,-]?\s*)?(?:vol\.?|volume)\s*(\d+)\s*$', lowered, re.IGNORECASE)
-            if vol_match:
-                parsed_name = vol_match.group(1).strip()
-                parsed_volume = vol_match.group(2).strip()
-
-            if parsed_volume:
-                filters_applied.append(f"volume~{parsed_volume}")
-                series_filter = db.and_(
-                    Series.name.ilike(f'%{parsed_name}%'),
-                    Series.volume.ilike(f'%{parsed_volume}%')
-                )
-
-            issue_query = issue_query.filter(series_filter)
-
-        if issue_number:
-            filters_applied.append(f"issue_number~{issue_number}")
-            issue_query = issue_query.filter(SeriesIssue.issue_number.ilike(f'%{issue_number}%'))
-
-        cleaned_query = (query or '').strip()
-        if cleaned_query:
-            filters_applied.append(f"query~{cleaned_query}")
-            ilike = f'%{cleaned_query}%'
-            issue_query = issue_query.filter(
-                db.or_(
-                    SeriesIssue.issue_number.ilike(ilike),
-                    SeriesIssue.title.ilike(ilike),
-                    SeriesIssue.cover_date.ilike(ilike),
-                    SeriesIssue.featured_characters.ilike(ilike),
-                    SeriesIssue.writer.ilike(ilike),
-                    SeriesIssue.artist.ilike(ilike),
-                    SeriesIssue.story_arc.ilike(ilike),
-                    Series.name.ilike(ilike),
-                )
-            )
-
-        print(f"🔍 Local search filters: {', '.join(filters_applied) if filters_applied else 'none'}")
-        issues = issue_query.limit(50).all()
-
-        results = []
-        for issue in issues:
-            series = issue.series
-            description_parts = []
-            if issue.writer:
-                description_parts.append(f"Writer: {issue.writer}")
-            if issue.artist:
-                description_parts.append(f"Artist: {issue.artist}")
-            if issue.story_arc:
-                description_parts.append(f"Story Arc: {issue.story_arc}")
-
-            result = {
-                'id': f'series_issue_{issue.id}',
-                'title': issue.title or series.display_name,
-                'issue_number': issue.issue_number,
-                'publisher': series.publisher or '',
-                'characters': issue.featured_characters or '',
-                'genre': '',
-                'release_date': issue.cover_date or '',
-                'description': ' | '.join(description_parts) if description_parts else '',
-                'cover_image_url': '',
-                'volume': series.display_name,
-                'series': series.display_name,
-            'condition': '',
-            'variant_cover_name': issue.story_arc or '',
-                'series_id': series.id,
-                'source': 'Series Catalog'
-            }
-            results.append(result)
-
-        return results
-
-    except Exception as e:
-        print(f"❌ Local search failed: {e}")
-        return []
-
-def search_openlibrary_api(query):
-    """Search Open Library API for comics with ISBN barcode information."""
-    search_url = "https://openlibrary.org/search.json"
-    
-    try:
-        headers = {
-            'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager; crench88@gmail.com) Python/3.x'
-        }
-        
-        # Open Library API parameters - search for comics
-        params = {
-            'q': f'{query} comic',
-            'subject': 'comic',
-            'limit': 20,
-            'fields': 'title,author_name,isbn,publish_date,publisher,cover_i,key'
-        }
-        
-        print(f"🔍 Searching Open Library API for: {query}")
-        response = requests.get(search_url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        results = []
-        
-        if 'docs' in data:
-            for book in data['docs']:
-                # Extract ISBN information
-                isbn = ''
-                if book.get('isbn'):
-                    # Get the first ISBN (usually the main one)
-                    isbns = book['isbn'] if isinstance(book['isbn'], list) else [book['isbn']]
-                    if isbns:
-                        isbn = isbns[0]
-                
-                # Only include if it has an ISBN
-                if isbn:
-                    result = {
-                        'id': book.get('key', ''),
-                        'title': book.get('title', ''),
-                        'issue_number': '1',  # Open Library doesn't have issue numbers
-                        'publisher': ', '.join(book.get('publisher', [])) if book.get('publisher') else '',
-                        'characters': ', '.join(book.get('author_name', [])) if book.get('author_name') else '',
-                        'genre': 'Comic',
-                        'release_date': book.get('publish_date', [''])[0] if book.get('publish_date') else '',
-                        'description': f"Comic book found via Open Library with ISBN: {isbn}",
-                        'cover_image_url': f"https://covers.openlibrary.org/b/id/{book.get('cover_i')}-M.jpg" if book.get('cover_i') else '',
-                        'volume': '',
-                        'upc': '',  # Open Library doesn't provide UPC
-                        'isbn': isbn,
-                        'source': 'Open Library'
-                    }
-                    results.append(result)
-        
-        print(f"📚 Open Library API found {len(results)} results with barcodes")
-        return results
-        
-    except Exception as e:
-        print(f"❌ Open Library API search failed: {e}")
-        return []
-
-def search_upc_database_api(query, api_key):
-    """Search UPC Database API for comic book data."""
-    if not api_key:
-        return []
-    
-    # Clean the query (remove any non-numeric characters for UPC)
-    upc_code = ''.join(filter(str.isdigit, query))
-    
-    if len(upc_code) < 10:  # UPC codes are typically 12-13 digits
-        return []
-    
-    # Use OAuth Bearer token authentication
-    url = f"https://api.upcdatabase.org/product/{upc_code}"
-    
-    try:
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager; crench88@gmail.com) Python/3.x'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Check if we got valid product data
-            if data.get('valid') and data.get('product'):
-                product = data['product']
-                
-                # Check if this looks like a comic book
-                title = product.get('title', '')
-                category = product.get('category', '').lower()
-                
-                # Filter for comic book related items
-                comic_keywords = ['comic', 'graphic novel', 'marvel', 'dc', 'superhero', 'spider-man', 'batman', 'superman']
-                is_comic = any(keyword in title.lower() or keyword in category for keyword in comic_keywords)
-                
-                if is_comic or 'book' in category:
-                    # Extract publisher from brand or manufacturer
-                    publisher = product.get('brand') or product.get('manufacturer') or 'Unknown'
-                    
-                    # Try to extract issue number from title
-                    issue_number = '1'  # Default
-                    if '#' in title:
-                        try:
-                            issue_match = title.split('#')[1].split()[0]
-                            if issue_match.isdigit():
-                                issue_number = issue_match
-                        except:
-                            pass
-                    
-                    result = {
-                        'id': f"upc_{upc_code}",
-                        'title': title,
-                        'issue_number': issue_number,
-                        'publisher': publisher,
-                        'characters': '',
-                        'genre': 'Comic Book',
-                        'release_date': '',
-                        'description': product.get('description', ''),
-                        'cover_image_url': product.get('image', ''),
-                        'volume': '',
-                        'upc': upc_code,
-                        'isbn': product.get('isbn', ''),
-                        'source': 'UPC Database'
-                    }
-                    
-                    return [result]
-        
-        elif response.status_code == 401:
-            print(f"❌ UPC Database API: Invalid API key")
-        elif response.status_code == 404:
-            print(f"❌ UPC Database API: Product not found for UPC {upc_code}")
-        else:
-            print(f"❌ UPC Database API: HTTP {response.status_code}")
-            
-    except Exception as e:
-        print(f"❌ UPC Database API error: {e}")
-    
-    return []
-
-def search_barcode_lookup_api(query, api_key):
-    """Search Barcode Lookup API for comic book data."""
-    if not api_key:
-        return []
-    
-    # Clean the query (remove any non-numeric characters for UPC)
-    upc_code = ''.join(filter(str.isdigit, query))
-    
-    if len(upc_code) < 10:  # UPC codes are typically 12-13 digits
-        return []
-    
-    url = "https://api.barcodelookup.com/v3/products"
-    
-    try:
-        headers = {
-            'User-Agent': 'ComicBookManager/1.0 (https://github.com/crench88/comicbook-manager; crench88@gmail.com) Python/3.x'
-        }
-        
-        params = {
-            'barcode': upc_code,
-            'key': api_key
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            if data.get('products') and len(data['products']) > 0:
-                product = data['products'][0]
-                
-                # Check if this looks like a comic book
-                title = product.get('title', '')
-                category = product.get('category', '').lower()
-                
-                # Filter for comic book related items
-                comic_keywords = ['comic', 'graphic novel', 'marvel', 'dc', 'superhero', 'spider-man', 'batman', 'superman']
-                is_comic = any(keyword in title.lower() or keyword in category for keyword in comic_keywords)
-                
-                if is_comic or 'book' in category:
-                    # Extract publisher from brand
-                    publisher = product.get('brand') or 'Unknown'
-                    
-                    # Try to extract issue number from title
-                    issue_number = '1'  # Default
-                    if '#' in title:
-                        try:
-                            issue_match = title.split('#')[1].split()[0]
-                            if issue_match.isdigit():
-                                issue_number = issue_match
-                        except:
-                            pass
-                    
-                    result = {
-                        'id': f"barcode_{upc_code}",
-                        'title': title,
-                        'issue_number': issue_number,
-                        'publisher': publisher,
-                        'characters': '',
-                        'genre': 'Comic Book',
-                        'release_date': '',
-                        'description': product.get('description', ''),
-                        'cover_image_url': product.get('images', [{}])[0].get('url', '') if product.get('images') else '',
-                        'volume': '',
-                        'upc': upc_code,
-                        'isbn': product.get('isbn', ''),
-                        'source': 'Barcode Lookup'
-                    }
-                    
-                    return [result]
-        
-        elif response.status_code == 401:
-            print(f"❌ Barcode Lookup API: Invalid API key")
-        elif response.status_code == 404:
-            print(f"❌ Barcode Lookup API: Product not found for UPC {upc_code}")
-        else:
-            print(f"❌ Barcode Lookup API: HTTP {response.status_code}")
-            
-    except Exception as e:
-        print(f"❌ Barcode Lookup API error: {e}")
-    
-    return []
-
-def search_ai_metadata(query):
-    """
-    AI-powered comic book metadata search using structured prompt.
-    This function simulates an AI assistant that can extract and structure
-    comic book metadata from natural language queries.
-    """
-    try:
-        print(f"🤖 AI Metadata Assistant processing query: '{query}'")
-        
-        # Parse the query to extract key information
-        query_lower = query.lower()
-        
-        # Extract series name, issue number, and variant info
-        series_name = ""
-        issue_number = ""
-        variant_info = ""
-        
-        # Look for issue number patterns (#1, #001, etc.)
-        import re
-        issue_match = re.search(r'#(\d+)', query)
-        if issue_match:
-            issue_number = issue_match.group(1)
-        
-        # Look for variant indicators
-        variant_indicators = ['variant', 'cover', 'edition', 'special', 'limited', 'exclusive']
-        for indicator in variant_indicators:
-            if indicator in query_lower:
-                variant_info = indicator.title()
-                break
-        
-        # Detect volume information from query
-        volume_info = None
-        volume_match = re.search(r'volume\s*(\d+)', query_lower)
-        if volume_match:
-            volume_info = int(volume_match.group(1))
-        
-        # Extract series name (everything before the issue number)
-        if issue_match:
-            series_name = query[:issue_match.start()].strip()
-        else:
-            series_name = query.strip()
-        
-        # Remove common words that aren't part of the series name
-        common_words = ['the', 'and', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by']
-        series_words = series_name.split()
-        filtered_words = [word for word in series_words if word.lower() not in common_words]
-        series_name = ' '.join(filtered_words)
-        
-        # Generate structured metadata based on the query
-        # This simulates what an AI would return
-        ai_result = {
-            'id': f"ai_{hash(query) % 10000}",
-            'title': series_name,
-            'issue_number': issue_number or '1',
-            'publisher': 'Marvel Comics' if any(word in query_lower for word in ['spider', 'iron', 'captain', 'avengers', 'x-men', 'marvel']) else 'DC Comics' if any(word in query_lower for word in ['batman', 'superman', 'flash', 'green', 'justice', 'dc']) else 'Unknown Publisher',
-            'characters': '',
-            'genre': 'Superhero',
-            'release_date': '',
-            'description': f"AI-generated metadata for {series_name} #{issue_number or '1'}",
-            'cover_image_url': '',
-            'volume': 'Volume 1',
-            'upc': '',
-            'isbn': '',
-            'source': 'AI Metadata Assistant',
-            'variant_cover_name': variant_info if variant_info else None,
-            'writers': [],
-            'artists': [],
-            'ai_enhanced': True,
-            'needs_details': True  # Flag to indicate this needs more details
-        }
-        
-        # Add some realistic metadata based on common comic patterns
-        if 'spider' in query_lower and 'man' in query_lower:
-            ai_result.update({
-                'title': 'The Amazing Spider-Man',
-                'publisher': 'Marvel Comics',
-                'characters': 'Spider-Man, Peter Parker, Mary Jane Watson, Aunt May',
-                'genre': 'Superhero, Action',
-                'description': f"Peter Parker swings into action as Spider-Man in issue #{issue_number or '1'}. Balancing his personal life with his superhero responsibilities.",
-                'writers': ['Stan Lee', 'Steve Ditko'],
-                'artists': ['Steve Ditko', 'John Romita Sr.'],
-                'release_date': '1963-03-01' if issue_number == '1' else '',
-                'upc': f"759606078001{issue_number.zfill(3)}" if issue_number else '',
-                'needs_details': False
-            })
-        elif 'iron' in query_lower and 'man' in query_lower:
-            # Enhanced Iron Man with multiple series support
-            results = []
-            
-            # If specific volume is requested, return only that volume
-            if volume_info:
-                series_info = get_iron_man_series_info_by_volume(issue_number, volume_info)
-                if series_info:
-                    ai_result.update({
-                        'title': series_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Iron Man, Tony Stark, Pepper Potts, Rhodey, Happy Hogan',
-                        'genre': 'Superhero, Sci-Fi, Action',
-                        'description': series_info['description'],
-                        'writers': series_info['writers'],
-                        'artists': series_info['artists'],
-                        'release_date': series_info['release_date'],
-                        'upc': series_info['upc'],
-                        'volume': f"Volume {volume_info}",
-                        'needs_details': False
-                    })
-                else:
-                    # Fallback to default
-                    series_info = get_iron_man_series_info(issue_number)
-                    ai_result.update({
-                        'title': series_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Iron Man, Tony Stark, Pepper Potts, Rhodey, Happy Hogan',
-                        'genre': 'Superhero, Sci-Fi, Action',
-                        'description': series_info['description'],
-                        'writers': series_info['writers'],
-                        'artists': series_info['artists'],
-                        'release_date': series_info['release_date'],
-                        'upc': series_info['upc'],
-                        'volume': f"Volume {volume_info}",
-                        'needs_details': False
-                    })
-            else:
-                # Return multiple results for different volumes that could contain this issue
-                possible_volumes = get_possible_iron_man_volumes(issue_number)
-                
-                for vol_info in possible_volumes:
-                    vol_result = ai_result.copy()
-                    vol_result.update({
-                        'id': f"ai_{hash(query + str(vol_info['volume'])) % 10000}",
-                        'title': vol_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Iron Man, Tony Stark, Pepper Potts, Rhodey, Happy Hogan',
-                        'genre': 'Superhero, Sci-Fi, Action',
-                        'description': vol_info['description'],
-                        'writers': vol_info['writers'],
-                        'artists': vol_info['artists'],
-                        'release_date': vol_info['release_date'],
-                        'upc': vol_info['upc'],
-                        'volume': f"Volume {vol_info['volume']}",
-                        'needs_details': False
-                    })
-                    results.append(vol_result)
-                
-                # If we found multiple volumes, return them all
-                if len(results) > 1:
-                    return results
-                elif len(results) == 1:
-                    ai_result.update(results[0])
-                else:
-                    # Fallback to default
-                    series_info = get_iron_man_series_info(issue_number)
-                    ai_result.update({
-                        'title': series_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Iron Man, Tony Stark, Pepper Potts, Rhodey, Happy Hogan',
-                        'genre': 'Superhero, Sci-Fi, Action',
-                        'description': series_info['description'],
-                        'writers': series_info['writers'],
-                        'artists': series_info['artists'],
-                        'release_date': series_info['release_date'],
-                        'upc': series_info['upc'],
-                        'volume': series_info.get('volume', 'Volume 1'),
-                        'needs_details': False
-                    })
-        elif 'spider' in query_lower and 'man' in query_lower:
-            # Enhanced Spider-Man with multiple series support
-            results = []
-            
-            # If specific volume is requested, return only that volume
-            if volume_info:
-                series_info = get_spider_man_series_info_by_volume(issue_number, volume_info)
-                if series_info:
-                    ai_result.update({
-                        'title': series_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Spider-Man, Peter Parker, Mary Jane Watson, Aunt May',
-                        'genre': 'Superhero, Action',
-                        'description': series_info['description'],
-                        'writers': series_info['writers'],
-                        'artists': series_info['artists'],
-                        'release_date': series_info['release_date'],
-                        'upc': series_info['upc'],
-                        'volume': f"Volume {volume_info}",
-                        'needs_details': False
-                    })
-                else:
-                    # Fallback to default
-                    series_info = get_spider_man_series_info(issue_number)
-                    ai_result.update({
-                        'title': series_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Spider-Man, Peter Parker, Mary Jane Watson, Aunt May',
-                        'genre': 'Superhero, Action',
-                        'description': series_info['description'],
-                        'writers': series_info['writers'],
-                        'artists': series_info['artists'],
-                        'release_date': series_info['release_date'],
-                        'upc': series_info['upc'],
-                        'volume': f"Volume {volume_info}",
-                        'needs_details': False
-                    })
-            else:
-                # Return multiple results for different volumes that could contain this issue
-                possible_volumes = get_possible_spider_man_volumes(issue_number)
-                
-                for vol_info in possible_volumes:
-                    vol_result = ai_result.copy()
-                    vol_result.update({
-                        'id': f"ai_{hash(query + str(vol_info['volume'])) % 10000}",
-                        'title': vol_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Spider-Man, Peter Parker, Mary Jane Watson, Aunt May',
-                        'genre': 'Superhero, Action',
-                        'description': vol_info['description'],
-                        'writers': vol_info['writers'],
-                        'artists': vol_info['artists'],
-                        'release_date': vol_info['release_date'],
-                        'upc': vol_info['upc'],
-                        'volume': f"Volume {vol_info['volume']}",
-                        'needs_details': False
-                    })
-                    results.append(vol_result)
-                
-                # If we found multiple volumes, return them all
-                if len(results) > 1:
-                    return results
-                elif len(results) == 1:
-                    ai_result.update(results[0])
-                else:
-                    # Fallback to default
-                    series_info = get_spider_man_series_info(issue_number)
-                    ai_result.update({
-                        'title': series_info['title'],
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Spider-Man, Peter Parker, Mary Jane Watson, Aunt May',
-                        'genre': 'Superhero, Action',
-                        'description': series_info['description'],
-                        'writers': series_info['writers'],
-                        'artists': series_info['artists'],
-                        'release_date': series_info['release_date'],
-                        'upc': series_info['upc'],
-                        'volume': series_info.get('volume', 'Volume 1'),
-                        'needs_details': False
-                    })
-        elif 'batman' in query_lower:
-            ai_result.update({
-                'title': 'Batman',
-                'publisher': 'DC Comics',
-                'characters': 'Batman, Bruce Wayne, Alfred Pennyworth, Commissioner Gordon',
-                'genre': 'Superhero, Crime',
-                'description': f"The Dark Knight protects Gotham City in issue #{issue_number or '1'}. Using his detective skills and martial arts to fight crime.",
-                'writers': ['Bob Kane', 'Bill Finger'],
-                'artists': ['Bob Kane', 'Bill Finger'],
-                'release_date': '1940-03-01' if issue_number == '1' else '',
-                'upc': f"761941358001{issue_number.zfill(3)}" if issue_number else '',
-                'needs_details': False
-            })
-        elif 'superman' in query_lower:
-            ai_result.update({
-                'title': 'Superman',
-                'publisher': 'DC Comics',
-                'characters': 'Superman, Clark Kent, Lois Lane, Lex Luthor',
-                'genre': 'Superhero, Action',
-                'description': f"The Man of Steel fights for truth and justice in issue #{issue_number or '1'}. The world\'s first and greatest superhero.",
-                'writers': ['Jerry Siegel'],
-                'artists': ['Joe Shuster'],
-                'release_date': '1938-04-01' if issue_number == '1' else '',
-                'upc': f"761941358002{issue_number.zfill(3)}" if issue_number else '',
-                'needs_details': False
-            })
-        elif 'x-men' in query_lower or 'xmen' in query_lower:
-            ai_result.update({
-                'title': 'X-Men',
-                'publisher': 'Marvel Comics',
-                'characters': 'Professor X, Cyclops, Jean Grey, Wolverine, Storm',
-                'genre': 'Superhero, Sci-Fi',
-                'description': f"Mutants fight for a world that fears and hates them in issue #{issue_number or '1'}.",
-                'writers': ['Stan Lee', 'Chris Claremont'],
-                'artists': ['Jack Kirby', 'Dave Cockrum'],
-                'release_date': '1963-09-01' if issue_number == '1' else '',
-                'upc': f"759606078003{issue_number.zfill(3)}" if issue_number else '',
-                'needs_details': False
-            })
-        elif 'avengers' in query_lower:
-            ai_result.update({
-                'title': 'The Avengers',
-                'publisher': 'Marvel Comics',
-                'characters': 'Iron Man, Captain America, Thor, Hulk, Black Widow, Hawkeye',
-                'genre': 'Superhero, Team',
-                'description': f"Earth\'s mightiest heroes assemble in issue #{issue_number or '1'}.",
-                'writers': ['Stan Lee', 'Roy Thomas'],
-                'artists': ['Jack Kirby', 'Don Heck'],
-                'release_date': '1963-09-01' if issue_number == '1' else '',
-                'upc': f"759606078004{issue_number.zfill(3)}" if issue_number else '',
-                'needs_details': False
-            })
-        else:
-            # For unknown comics, set needs_details to True to prompt for more information
-            ai_result['needs_details'] = True
-        
-        print(f"🤖 AI generated metadata: {ai_result['title']} #{ai_result['issue_number']}")
-        return [ai_result]
-        
-    except Exception as e:
-        print(f"❌ AI Metadata Assistant error: {e}")
-        return []
-
-def get_iron_man_series_info(issue_number):
-    """
-    Get detailed information for Iron Man comics based on issue number.
-    This helps distinguish between different Iron Man series and provides accurate release dates.
-    """
-    try:
-        issue_num = int(issue_number) if issue_number and issue_number.isdigit() else 1
-        
-        # Iron Man series information
-        if issue_num <= 332:  # Original series (1968-1996)
-            if issue_num == 1:
-                return {
-                    'title': 'Iron Man',
-                    'description': f"Tony Stark debuts as Iron Man in issue #{issue_num}. The first appearance of the armored Avenger.",
-                    'writers': ['Stan Lee', 'Larry Lieber'],
-                    'artists': ['Don Heck', 'Jack Kirby'],
-                    'release_date': '1968-05-01',
-                    'upc': f"759606078002{str(issue_num).zfill(3)}"
-                }
-            elif issue_num <= 50:
-                return {
-                    'title': 'Iron Man',
-                    'description': f"Early Iron Man adventures featuring Tony Stark's technological evolution and battles against classic villains.",
-                    'writers': ['Stan Lee', 'Archie Goodwin'],
-                    'artists': ['Don Heck', 'George Tuska'],
-                    'release_date': f"1968-{str(5 + (issue_num-1)//6).zfill(2)}-01",
-                    'upc': f"759606078002{str(issue_num).zfill(3)}"
-                }
-            elif issue_num <= 100:
-                return {
-                    'title': 'Iron Man',
-                    'description': f"Iron Man faces new challenges as Tony Stark's personal and superhero lives become increasingly complex.",
-                    'writers': ['Archie Goodwin', 'Mike Friedrich'],
-                    'artists': ['George Tuska', 'Herb Trimpe'],
-                    'release_date': f"1972-{str(1 + (issue_num-51)//6).zfill(2)}-01",
-                    'upc': f"759606078002{str(issue_num).zfill(3)}"
-                }
-            else:
-                return {
-                    'title': 'Iron Man',
-                    'description': f"Classic Iron Man series featuring Tony Stark's ongoing adventures and technological innovations.",
-                    'writers': ['David Michelinie', 'Bob Layton'],
-                    'artists': ['John Romita Jr.', 'Bob Layton'],
-                    'release_date': f"1978-{str(1 + (issue_num-101)//6).zfill(2)}-01",
-                    'upc': f"759606078002{str(issue_num).zfill(3)}"
-                }
-        
-        elif issue_num <= 500:  # Volume 2 (1996-2004)
-            return {
-                'title': 'Iron Man',
-                'description': f"Volume 2 of Iron Man featuring modern storytelling and updated armor technology.",
-                'writers': ['Scott Lobdell', 'Kurt Busiek'],
-                'artists': ['Jim Lee', 'Sean Chen'],
-                'release_date': f"1996-{str(1 + (issue_num-333)//6).zfill(2)}-01",
-                'upc': f"759606078003{str(issue_num-332).zfill(3)}"
-            }
-        
-        elif issue_num <= 527:  # Volume 3 (2004-2008)
-            return {
-                'title': 'Iron Man',
-                'description': f"Volume 3 of Iron Man featuring the Extremis storyline and modern Iron Man adventures.",
-                'writers': ['Warren Ellis', 'Daniel Knauf'],
-                'artists': ['Adi Granov', 'Roberto de la Torre'],
-                'release_date': f"2004-{str(1 + (issue_num-501)//6).zfill(2)}-01",
-                'upc': f"759606078004{str(issue_num-500).zfill(3)}"
-            }
-        
-        elif issue_num <= 600:  # Volume 4 (2008-2012)
-            return {
-                'title': 'Iron Man',
-                'description': f"Volume 4 of Iron Man featuring the Dark Reign and Siege storylines.",
-                'writers': ['Matt Fraction', 'Kieron Gillen'],
-                'artists': ['Salvador Larroca', 'Greg Land'],
-                'release_date': f"2008-{str(1 + (issue_num-528)//6).zfill(2)}-01",
-                'upc': f"759606078005{str(issue_num-527).zfill(3)}"
-            }
-        
-        else:  # Modern series (2012+)
-            return {
-                'title': 'Iron Man',
-                'description': f"Modern Iron Man series featuring Tony Stark's latest adventures and technological breakthroughs.",
-                'writers': ['Kieron Gillen', 'Brian Michael Bendis'],
-                'artists': ['Greg Land', 'Mike Deodato'],
-                'release_date': f"2012-{str(1 + (issue_num-601)//6).zfill(2)}-01",
-                'upc': f"759606078006{str(issue_num-600).zfill(3)}"
-            }
-            
-    except Exception as e:
-        print(f"❌ Error getting Iron Man series info: {e}")
-        # Fallback for any errors
-        return {
-            'title': 'Iron Man',
-            'description': f"Tony Stark suits up as Iron Man in issue #{issue_number or '1'}. Using his genius intellect and advanced technology to protect the world.",
-            'writers': ['Stan Lee', 'Larry Lieber'],
-            'artists': ['Don Heck', 'Jack Kirby'],
-            'release_date': '1968-05-01',
-            'upc': f"759606078002{str(issue_number or '1').zfill(3)}"
-        }
-
-def get_iron_man_series_info_by_volume(issue_number, volume):
-    """
-    Get Iron Man series information for a specific volume.
-    """
-    try:
-        issue_num = int(issue_number) if issue_number and issue_number.isdigit() else 1
-        
-        if volume == 1:  # Original series (1968-1996)
-            if issue_num <= 332:
-                return get_iron_man_series_info(issue_number)
-            else:
-                return None  # Issue doesn't exist in Volume 1
-        elif volume == 2:  # Volume 2 (1996-2004)
-            if issue_num <= 168:  # Volume 2 had 168 issues
-                return {
-                    'title': 'Iron Man',
-                    'description': f"Volume 2 of Iron Man featuring modern storytelling and updated armor technology in issue #{issue_num}.",
-                    'writers': ['Scott Lobdell', 'Kurt Busiek'],
-                    'artists': ['Jim Lee', 'Sean Chen'],
-                    'release_date': f"1996-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                    'upc': f"759606078003{str(issue_num).zfill(3)}",
-                    'volume': 2
-                }
-            else:
-                return None
-        elif volume == 3:  # Volume 3 (2004-2008)
-            if issue_num <= 27:  # Volume 3 had 27 issues
-                return {
-                    'title': 'Iron Man',
-                    'description': f"Volume 3 of Iron Man featuring the Extremis storyline and modern Iron Man adventures in issue #{issue_num}.",
-                    'writers': ['Warren Ellis', 'Daniel Knauf'],
-                    'artists': ['Adi Granov', 'Roberto de la Torre'],
-                    'release_date': f"2004-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                    'upc': f"759606078004{str(issue_num).zfill(3)}",
-                    'volume': 3
-                }
-            else:
-                return None
-        elif volume == 4:  # Volume 4 (2008-2012)
-            if issue_num <= 73:  # Volume 4 had 73 issues
-                return {
-                    'title': 'Iron Man',
-                    'description': f"Volume 4 of Iron Man featuring the Dark Reign and Siege storylines in issue #{issue_num}.",
-                    'writers': ['Matt Fraction', 'Kieron Gillen'],
-                    'artists': ['Salvador Larroca', 'Greg Land'],
-                    'release_date': f"2008-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                    'upc': f"759606078005{str(issue_num).zfill(3)}",
-                    'volume': 4
-                }
-            else:
-                return None
-        elif volume == 5:  # Volume 5 (2012+)
-            return {
-                'title': 'Iron Man',
-                'description': f"Volume 5 of Iron Man featuring Tony Stark's latest adventures and technological breakthroughs in issue #{issue_num}.",
-                'writers': ['Kieron Gillen', 'Brian Michael Bendis'],
-                'artists': ['Greg Land', 'Mike Deodato'],
-                'release_date': f"2012-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                'upc': f"759606078006{str(issue_num).zfill(3)}",
-                'volume': 5
-            }
-        else:
-            return None
-            
-    except Exception as e:
-        print(f"❌ Error getting Iron Man series info by volume: {e}")
-        return None
-
-def get_possible_iron_man_volumes(issue_number):
-    """
-    Get all possible Iron Man volumes that could contain a given issue number.
-    Returns a list of volume information.
-    """
-    try:
-        issue_num = int(issue_number) if issue_number and issue_number.isdigit() else 1
-        possible_volumes = []
-        
-        # Check which volumes could contain this issue number
-        if issue_num <= 332:  # Original series
-            series_info = get_iron_man_series_info(issue_number)
-            series_info['volume'] = 1
-            possible_volumes.append(series_info)
-        
-        if issue_num <= 168:  # Volume 2
-            vol2_info = get_iron_man_series_info_by_volume(issue_number, 2)
-            if vol2_info:
-                possible_volumes.append(vol2_info)
-        
-        if issue_num <= 27:  # Volume 3
-            vol3_info = get_iron_man_series_info_by_volume(issue_number, 3)
-            if vol3_info:
-                possible_volumes.append(vol3_info)
-        
-        if issue_num <= 73:  # Volume 4
-            vol4_info = get_iron_man_series_info_by_volume(issue_number, 4)
-            if vol4_info:
-                possible_volumes.append(vol4_info)
-        
-        # Volume 5 can have any issue number
-        vol5_info = get_iron_man_series_info_by_volume(issue_number, 5)
-        if vol5_info:
-            possible_volumes.append(vol5_info)
-        
-        return possible_volumes
-        
-    except Exception as e:
-        print(f"❌ Error getting possible Iron Man volumes: {e}")
-        return []
-
-def get_spider_man_series_info(issue_number):
-    """
-    Get detailed information for Spider-Man comics based on issue number.
-    This helps distinguish between different Spider-Man series and provides accurate release dates.
-    """
-    try:
-        issue_num = int(issue_number) if issue_number and issue_number.isdigit() else 1
-        
-        # Spider-Man series information
-        if issue_num <= 441:  # Original series (1963-1998)
-            if issue_num == 1:
-                return {
-                    'title': 'The Amazing Spider-Man',
-                    'description': f"Peter Parker debuts as Spider-Man in issue #{issue_num}. The first appearance of the web-slinging superhero.",
-                    'writers': ['Stan Lee'],
-                    'artists': ['Steve Ditko'],
-                    'release_date': '1962-12-10',
-                    'upc': f"759606078001{str(issue_num).zfill(3)}",
-                    'volume': 1
-                }
-            elif issue_num <= 50:
-                return {
-                    'title': 'The Amazing Spider-Man',
-                    'description': f"Early Spider-Man adventures featuring Peter Parker's struggles with his dual identity and classic villains.",
-                    'writers': ['Stan Lee'],
-                    'artists': ['Steve Ditko', 'John Romita Sr.'],
-                    'release_date': f"1963-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                    'upc': f"759606078001{str(issue_num).zfill(3)}",
-                    'volume': 1
-                }
-            elif issue_num <= 100:
-                return {
-                    'title': 'The Amazing Spider-Man',
-                    'description': f"Spider-Man faces new challenges as Peter Parker's personal and superhero lives become increasingly complex.",
-                    'writers': ['Stan Lee', 'Gerry Conway'],
-                    'artists': ['John Romita Sr.', 'Gil Kane'],
-                    'release_date': f"1971-{str(1 + (issue_num-51)//6).zfill(2)}-01",
-                    'upc': f"759606078001{str(issue_num).zfill(3)}",
-                    'volume': 1
-                }
-            else:
-                return {
-                    'title': 'The Amazing Spider-Man',
-                    'description': f"Classic Spider-Man series featuring Peter Parker's ongoing adventures and personal struggles.",
-                    'writers': ['Marv Wolfman', 'Roger Stern'],
-                    'artists': ['John Romita Jr.', 'Todd McFarlane'],
-                    'release_date': f"1978-{str(1 + (issue_num-101)//6).zfill(2)}-01",
-                    'upc': f"759606078001{str(issue_num).zfill(3)}",
-                    'volume': 1
-                }
-        
-        elif issue_num <= 700:  # Volume 2 (1999-2013)
-            return {
-                'title': 'The Amazing Spider-Man',
-                'description': f"Volume 2 of The Amazing Spider-Man featuring modern storytelling and updated adventures.",
-                'writers': ['Howard Mackie', 'J. Michael Straczynski'],
-                'artists': ['John Byrne', 'John Romita Jr.'],
-                'release_date': f"1999-{str(1 + (issue_num-442)//6).zfill(2)}-01",
-                'upc': f"759606078002{str(issue_num-441).zfill(3)}",
-                'volume': 2
-            }
-        
-        elif issue_num <= 800:  # Volume 3 (2014-2018)
-            return {
-                'title': 'The Amazing Spider-Man',
-                'description': f"Volume 3 of The Amazing Spider-Man featuring the Superior Spider-Man storyline and modern adventures.",
-                'writers': ['Dan Slott', 'Nick Spencer'],
-                'artists': ['Humberto Ramos', 'Ryan Ottley'],
-                'release_date': f"2014-{str(1 + (issue_num-701)//6).zfill(2)}-01",
-                'upc': f"759606078003{str(issue_num-700).zfill(3)}",
-                'volume': 3
-            }
-        
-        else:  # Volume 4 (2018+)
-            return {
-                'title': 'The Amazing Spider-Man',
-                'description': f"Volume 4 of The Amazing Spider-Man featuring Peter Parker's latest adventures and challenges.",
-                'writers': ['Nick Spencer', 'Zeb Wells'],
-                'artists': ['Ryan Ottley', 'Patrick Gleason'],
-                'release_date': f"2018-{str(1 + (issue_num-801)//6).zfill(2)}-01",
-                'upc': f"759606078004{str(issue_num-800).zfill(3)}",
-                'volume': 4
-            }
-            
-    except Exception as e:
-        print(f"❌ Error getting Spider-Man series info: {e}")
-        # Fallback for any errors
-        return {
-            'title': 'The Amazing Spider-Man',
-            'description': f"Peter Parker swings into action as Spider-Man in issue #{issue_number or '1'}. Balancing his personal life with his superhero responsibilities.",
-            'writers': ['Stan Lee'],
-            'artists': ['Steve Ditko'],
-            'release_date': '1962-12-10',
-            'upc': f"759606078001{str(issue_number or '1').zfill(3)}",
-            'volume': 1
-        }
-
-def get_spider_man_series_info_by_volume(issue_number, volume):
-    """
-    Get Spider-Man series information for a specific volume.
-    """
-    try:
-        issue_num = int(issue_number) if issue_number and issue_number.isdigit() else 1
-        
-        if volume == 1:  # Original series (1963-1998)
-            if issue_num <= 441:
-                return get_spider_man_series_info(issue_number)
-            else:
-                return None  # Issue doesn't exist in Volume 1
-        elif volume == 2:  # Volume 2 (1999-2013)
-            if issue_num <= 258:  # Volume 2 had 258 issues
-                return {
-                    'title': 'The Amazing Spider-Man',
-                    'description': f"Volume 2 of The Amazing Spider-Man featuring modern storytelling and updated adventures in issue #{issue_num}.",
-                    'writers': ['Howard Mackie', 'J. Michael Straczynski'],
-                    'artists': ['John Byrne', 'John Romita Jr.'],
-                    'release_date': f"1999-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                    'upc': f"759606078002{str(issue_num).zfill(3)}",
-                    'volume': 2
-                }
-            else:
-                return None
-        elif volume == 3:  # Volume 3 (2014-2018)
-            if issue_num <= 99:  # Volume 3 had 99 issues
-                return {
-                    'title': 'The Amazing Spider-Man',
-                    'description': f"Volume 3 of The Amazing Spider-Man featuring the Superior Spider-Man storyline and modern adventures in issue #{issue_num}.",
-                    'writers': ['Dan Slott', 'Nick Spencer'],
-                    'artists': ['Humberto Ramos', 'Ryan Ottley'],
-                    'release_date': f"2014-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                    'upc': f"759606078003{str(issue_num).zfill(3)}",
-                    'volume': 3
-                }
-            else:
-                return None
-        elif volume == 4:  # Volume 4 (2018+)
-            return {
-                'title': 'The Amazing Spider-Man',
-                'description': f"Volume 4 of The Amazing Spider-Man featuring Peter Parker's latest adventures and challenges in issue #{issue_num}.",
-                'writers': ['Nick Spencer', 'Zeb Wells'],
-                'artists': ['Ryan Ottley', 'Patrick Gleason'],
-                'release_date': f"2018-{str(1 + (issue_num-1)//6).zfill(2)}-01",
-                'upc': f"759606078004{str(issue_num).zfill(3)}",
-                'volume': 4
-            }
-        else:
-            return None
-            
-    except Exception as e:
-        print(f"❌ Error getting Spider-Man series info by volume: {e}")
-        return None
-
-def get_possible_spider_man_volumes(issue_number):
-    """
-    Get all possible Spider-Man volumes that could contain a given issue number.
-    Returns a list of volume information.
-    """
-    try:
-        issue_num = int(issue_number) if issue_number and issue_number.isdigit() else 1
-        possible_volumes = []
-        
-        # Check which volumes could contain this issue number
-        if issue_num <= 441:  # Original series
-            series_info = get_spider_man_series_info(issue_number)
-            series_info['volume'] = 1
-            possible_volumes.append(series_info)
-        
-        if issue_num <= 258:  # Volume 2
-            vol2_info = get_spider_man_series_info_by_volume(issue_number, 2)
-            if vol2_info:
-                possible_volumes.append(vol2_info)
-        
-        if issue_num <= 99:  # Volume 3
-            vol3_info = get_spider_man_series_info_by_volume(issue_number, 3)
-            if vol3_info:
-                possible_volumes.append(vol3_info)
-        
-        # Volume 4 can have any issue number
-        vol4_info = get_spider_man_series_info_by_volume(issue_number, 4)
-        if vol4_info:
-            possible_volumes.append(vol4_info)
-        
-        return possible_volumes
-        
-    except Exception as e:
-        print(f"❌ Error getting possible Spider-Man volumes: {e}")
-        return []
-
-def enhance_results_with_ai(results, query):
-    """
-    Enhance existing search results with AI-generated metadata.
-    This function takes results from other sources and enhances them with AI.
-    """
-    try:
-        print(f"🤖 Enhancing {len(results)} results with AI...")
-        enhanced_results = []
-        
-        for result in results:
-            # Create a copy of the result
-            enhanced_result = result.copy()
-            
-            # Add AI enhancement flag
-            enhanced_result['ai_enhanced'] = True
-            enhanced_result['original_source'] = result.get('source', 'Unknown')
-            enhanced_result['source'] = f"{result.get('source', 'Unknown')} + AI"
-            
-            # Enhance missing fields based on the query and existing data
-            query_lower = query.lower()
-            title = result.get('title', '') or ''
-            series = result.get('series', '') or ''
-            title_lower = (title + ' ' + series).lower()
-            
-            # Enhance genre if missing
-            if not enhanced_result.get('genre') or enhanced_result.get('genre') == '':
-                if any(word in title_lower for word in ['spider', 'iron', 'captain', 'avengers', 'x-men', 'marvel', 'batman', 'superman', 'flash', 'justice']):
-                    enhanced_result['genre'] = 'Superhero, Action'
-                elif any(word in title_lower for word in ['horror', 'zombie', 'vampire', 'monster']):
-                    enhanced_result['genre'] = 'Horror'
-                elif any(word in title_lower for word in ['sci-fi', 'space', 'robot', 'alien']):
-                    enhanced_result['genre'] = 'Science Fiction'
-                else:
-                    enhanced_result['genre'] = 'Comic Book'
-            
-            # Enhance characters if missing
-            if not enhanced_result.get('characters') or enhanced_result.get('characters') == '':
-                if 'spider' in title_lower:
-                    enhanced_result['characters'] = 'Spider-Man, Peter Parker, Mary Jane Watson'
-                elif 'iron' in title_lower and 'man' in title_lower:
-                    enhanced_result['characters'] = 'Iron Man, Tony Stark, Pepper Potts'
-                elif 'batman' in title_lower:
-                    enhanced_result['characters'] = 'Batman, Bruce Wayne, Alfred Pennyworth'
-                elif 'superman' in title_lower:
-                    enhanced_result['characters'] = 'Superman, Clark Kent, Lois Lane'
-                elif 'x-men' in title_lower:
-                    enhanced_result['characters'] = 'Professor X, Cyclops, Jean Grey, Wolverine'
-                elif 'avengers' in title_lower:
-                    enhanced_result['characters'] = 'Iron Man, Captain America, Thor, Hulk'
-            
-            # Enhance description if missing or too short
-            if not enhanced_result.get('description') or len(enhanced_result.get('description', '')) < 20:
-                if 'spider' in title_lower:
-                    # Use the Spider-Man series info for better descriptions
-                    series_info = get_spider_man_series_info(enhanced_result.get('issue_number', '1'))
-                    enhanced_result['description'] = series_info['description']
-                    enhanced_result['release_date'] = series_info['release_date']
-                    enhanced_result['writers'] = series_info['writers']
-                    enhanced_result['artists'] = series_info['artists']
-                elif 'iron' in title_lower and 'man' in title_lower:
-                    # Use the Iron Man series info for better descriptions
-                    series_info = get_iron_man_series_info(enhanced_result.get('issue_number', '1'))
-                    enhanced_result['description'] = series_info['description']
-                    enhanced_result['release_date'] = series_info['release_date']
-                    enhanced_result['writers'] = series_info['writers']
-                    enhanced_result['artists'] = series_info['artists']
-                elif 'batman' in title_lower:
-                    enhanced_result['description'] = f"The Dark Knight protects Gotham City using his detective skills and martial arts in issue #{enhanced_result.get('issue_number', '1')}."
-                elif 'superman' in title_lower:
-                    enhanced_result['description'] = f"The Man of Steel fights for truth and justice as the world's first and greatest superhero in issue #{enhanced_result.get('issue_number', '1')}."
-                else:
-                    title = enhanced_result.get('title', 'Unknown') or 'Unknown'
-                    enhanced_result['description'] = f"AI-enhanced description for {title} #{enhanced_result.get('issue_number', '1')}."
-            
-            # Add writers and artists if missing
-            if not enhanced_result.get('writers'):
-                if 'spider' in title_lower:
-                    enhanced_result['writers'] = ['Stan Lee', 'Steve Ditko']
-                elif 'iron' in title_lower and 'man' in title_lower:
-                    enhanced_result['writers'] = ['Stan Lee', 'Larry Lieber']
-                elif 'batman' in title_lower:
-                    enhanced_result['writers'] = ['Bob Kane', 'Bill Finger']
-                elif 'superman' in title_lower:
-                    enhanced_result['writers'] = ['Jerry Siegel']
-            
-            if not enhanced_result.get('artists'):
-                if 'spider' in title_lower:
-                    enhanced_result['artists'] = ['Steve Ditko', 'John Romita Sr.']
-                elif 'iron' in title_lower and 'man' in title_lower:
-                    enhanced_result['artists'] = ['Don Heck', 'Jack Kirby']
-                elif 'batman' in title_lower:
-                    enhanced_result['artists'] = ['Bob Kane', 'Bill Finger']
-                elif 'superman' in title_lower:
-                    enhanced_result['artists'] = ['Joe Shuster']
-            
-            # Mark as enhanced (not needing additional details)
-            enhanced_result['needs_details'] = False
-            
-            enhanced_results.append(enhanced_result)
-        
-        print(f"🤖 Enhanced {len(enhanced_results)} results with AI metadata")
-        return enhanced_results
-        
-    except Exception as e:
-        print(f"❌ AI Enhancement error: {e}")
-        return results  # Return original results if enhancement fails
 
 def save_cover_image(file):
     """Save uploaded cover image and return BLOB data and MIME type."""
@@ -1958,141 +402,194 @@ def save_cover_image(file):
 @comics_bp.route('/comics')
 @login_required
 def index():
-    """Display all comics with search and filtering."""
-    page = request.args.get('page', 1, type=int)
+    """Display collection as a master-detail series browser."""
     search_query = request.args.get('search', '')
     publisher_filter = request.args.get('publisher', '')
     condition_filter = request.args.get('condition', '')
     genre_filter = request.args.get('genre', '')
     wishlist_only = request.args.get('wishlist', False, type=bool)
     sort_by = request.args.get('sort', 'title')
-    
-    # Build query
-    query = Comic.query.filter_by(user_id=current_user.id)
-    
-    if search_query:
-        query = query.filter(
-            db.or_(
-                Comic.title.ilike(f'%{search_query}%'),
-                Comic.characters.ilike(f'%{search_query}%'),
-                Comic.publisher.ilike(f'%{search_query}%')
-            )
-        )
-    
-    if publisher_filter:
-        query = query.filter(Comic.publisher == publisher_filter)
-    
-    if condition_filter:
-        query = query.filter(Comic.condition == condition_filter)
-    
-    if genre_filter:
-        query = query.filter(Comic.genre.ilike(f'%{genre_filter}%'))
-    
-    if wishlist_only:
-        query = query.filter(Comic.is_wishlist == True)
-    
-    # Apply sorting
-    if sort_by == 'title':
-        query = query.order_by(Comic.title, Comic.issue_number)
-    elif sort_by == 'publisher':
-        query = query.order_by(Comic.publisher, Comic.title, Comic.issue_number)
-    elif sort_by == 'condition':
-        query = query.order_by(Comic.condition, Comic.title, Comic.issue_number)
-    elif sort_by == 'estimated_value':
-        query = query.order_by(Comic.estimated_value.desc(), Comic.title, Comic.issue_number)
-    elif sort_by == 'date_added':
-        query = query.order_by(Comic.id.desc())  # Assuming newer comics have higher IDs
-    else:
-        query = query.order_by(Comic.title, Comic.issue_number)
-    
-    # Get unique publishers for filter dropdown
+    series_page = request.args.get('series_page', 1, type=int)
+    comic_page = request.args.get('comic_page', 1, type=int)
+    selected_series = request.args.get('series', '')
+
+    filter_kwargs = dict(
+        search_query=search_query,
+        publisher_filter=publisher_filter,
+        condition_filter=condition_filter,
+        genre_filter=genre_filter,
+        wishlist_only=wishlist_only,
+    )
+
     publishers = db.session.query(Comic.publisher).filter_by(
         user_id=current_user.id
     ).distinct().all()
     publishers = [pub[0] for pub in publishers if pub[0]]
-    
-    # Get all comics (no pagination for grouped view)
-    all_comics = query.all()
-    
-    # Group comics by series
-    comics_by_series = {}
-    for comic in all_comics:
-        series_name = comic.series or 'Unknown Series'
-        if series_name not in comics_by_series:
-            comics_by_series[series_name] = []
-        comics_by_series[series_name].append(comic)
 
-    # Sort comics within each series by issue number (numeric first, then suffix)
-    def issue_sort_key(comic):
-        issue = (comic.issue_number or '').strip()
-        if not issue:
-            return (float('inf'), '', comic.title.lower())
-        
-        match = re.match(r'(\d+(?:\.\d+)?)\s*(.*)', issue)
-        if match:
-            numeric_part = float(match.group(1))
-            suffix = (match.group(2) or '').strip().lower()
-            return (numeric_part, suffix, comic.title.lower())
-        
-        return (float('inf'), issue.lower(), comic.title.lower())
+    series_pagination = _filter_series_query(
+        current_user.id, **filter_kwargs,
+    ).paginate(page=series_page, per_page=SERIES_PER_PAGE, error_out=False)
 
-    for comics_list in comics_by_series.values():
-        comics_list.sort(key=issue_sort_key)
+    series_rows = [
+        {'name': row.series_name, 'count': row.issue_count}
+        for row in series_pagination.items
+    ]
 
-    # Track duplicate copies within each series (same issue number/title)
-    for comics_list in comics_by_series.values():
-        issue_counts = {}
-        for comic in comics_list:
-            key = (comic.issue_number, comic.title or '')
-            issue_counts[key] = issue_counts.get(key, 0) + 1
+    total_comics = db.session.query(func.count(Comic.id)).filter(
+        Comic.user_id == current_user.id,
+    )
+    total_comics = _apply_comic_filters(total_comics, **filter_kwargs).scalar() or 0
 
-        issue_occurrence = {}
-        for comic in comics_list:
-            key = (comic.issue_number, comic.title or '')
-            total = issue_counts.get(key, 1)
-            if total > 1:
-                issue_occurrence[key] = issue_occurrence.get(key, 0) + 1
-                comic.duplicate_index = issue_occurrence[key]
-                comic.duplicate_total = total
-            else:
-                comic.duplicate_index = None
-                comic.duplicate_total = 1
+    selected_comics = None
+    comics_pagination = None
+    selected_series_name = None
+    selected_series_count = 0
 
-    # Sort series alphabetically
-    sorted_series = sorted(comics_by_series.keys())
-    
-    # Create a mock pagination object for compatibility
-    class MockPagination:
-        def __init__(self, items, total, page=1, per_page=50):
-            self.items = items
+    if series_rows:
+        series_names = [row['name'] for row in series_rows]
+        if selected_series not in series_names:
+            count_row = _filter_series_query(
+                current_user.id, **filter_kwargs,
+            ).filter(
+                func.coalesce(
+                    func.nullif(func.trim(Comic.series), ''),
+                    'Unknown Series',
+                ) == selected_series
+            ).first()
+            if not count_row:
+                selected_series = series_names[0]
+
+        selected_series_name = selected_series
+        selected_series_count = next(
+            (row['count'] for row in series_rows if row['name'] == selected_series_name),
+            0,
+        )
+        if selected_series_count == 0:
+            count_row = _filter_series_query(
+                current_user.id, **filter_kwargs,
+            ).filter(
+                func.coalesce(
+                    func.nullif(func.trim(Comic.series), ''),
+                    'Unknown Series',
+                ) == selected_series_name
+            ).first()
+            selected_series_count = count_row.issue_count if count_row else 0
+
+        comics_query = _comics_for_series_query(
+            current_user.id, selected_series_name, **filter_kwargs,
+        )
+        all_in_series = comics_query.all()
+        all_in_series.sort(key=_issue_sort_key)
+        _annotate_duplicates(all_in_series)
+
+        total_in_series = len(all_in_series)
+        start = (comic_page - 1) * COMICS_PER_PAGE
+        end = start + COMICS_PER_PAGE
+        page_comics = all_in_series[start:end]
+
+        class SeriesComicPagination:
+            def __init__(self, items, total, page, per_page):
+                self.items = items
+                self.total = total
+                self.page = page
+                self.per_page = per_page
+                self.pages = max(1, (total + per_page - 1) // per_page)
+                self.has_prev = page > 1
+                self.has_next = page < self.pages
+                self.prev_num = page - 1 if self.has_prev else None
+                self.next_num = page + 1 if self.has_next else None
+
+            def iter_pages(self, left_edge=1, right_edge=1, left_current=2, right_current=2):
+                last = self.pages
+                for num in range(1, last + 1):
+                    if (
+                        num <= left_edge
+                        or num > last - right_edge
+                        or abs(num - self.page) <= left_current
+                        or abs(num - self.page) <= right_current
+                    ):
+                        yield num
+
+        comics_pagination = SeriesComicPagination(
+            page_comics, total_in_series, comic_page, COMICS_PER_PAGE,
+        )
+        selected_comics = page_comics
+
+    class TotalComics:
+        def __init__(self, total):
             self.total = total
-            self.page = page
-            self.pages = 1
-            self.has_prev = False
-            self.has_next = False
-            self.prev_num = None
-            self.next_num = None
-            self.iter_pages = lambda: [1]
-    
-    # Flatten the grouped comics for pagination compatibility
-    flattened_comics = []
-    for series_name in sorted_series:
-        flattened_comics.extend(comics_by_series[series_name])
-    
-    comics = MockPagination(flattened_comics, len(flattened_comics))
-    
-    return render_template('comics/index.html',
-                         title='My Comics',
-                         comics=comics,
-                         comics_by_series=comics_by_series,
-                         sorted_series=sorted_series,
-                         search_query=search_query,
-                         publisher_filter=publisher_filter,
-                         condition_filter=condition_filter,
-                         genre_filter=genre_filter,
-                         wishlist_only=wishlist_only,
-                         sort_by=sort_by,
-                         publishers=publishers)
+
+    return render_template(
+        'comics/index.html',
+        title='My Comics',
+        comics=TotalComics(total_comics),
+        series_rows=series_rows,
+        series_pagination=series_pagination,
+        selected_series=selected_series_name,
+        selected_series_count=selected_series_count,
+        selected_comics=selected_comics,
+        comics_pagination=comics_pagination,
+        search_query=search_query,
+        publisher_filter=publisher_filter,
+        condition_filter=condition_filter,
+        genre_filter=genre_filter,
+        wishlist_only=wishlist_only,
+        sort_by=sort_by,
+        publishers=publishers,
+        comics_per_page=COMICS_PER_PAGE,
+    )
+
+
+@comics_bp.route('/comics/series-issues')
+@login_required
+def series_issues():
+    """JSON endpoint for comics in a selected series (AJAX grid refresh)."""
+    series_name = request.args.get('series', '').strip()
+    if not series_name:
+        return jsonify({'error': 'Series name required'}), 400
+
+    search_query = request.args.get('search', '')
+    publisher_filter = request.args.get('publisher', '')
+    condition_filter = request.args.get('condition', '')
+    genre_filter = request.args.get('genre', '')
+    wishlist_only = request.args.get('wishlist', False, type=bool)
+    comic_page = request.args.get('comic_page', 1, type=int)
+
+    filter_kwargs = dict(
+        search_query=search_query,
+        publisher_filter=publisher_filter,
+        condition_filter=condition_filter,
+        genre_filter=genre_filter,
+        wishlist_only=wishlist_only,
+    )
+
+    comics_query = _comics_for_series_query(
+        current_user.id, series_name, **filter_kwargs,
+    )
+    all_in_series = comics_query.all()
+    all_in_series.sort(key=_issue_sort_key)
+    _annotate_duplicates(all_in_series)
+
+    total = len(all_in_series)
+    start = (comic_page - 1) * COMICS_PER_PAGE
+    end = start + COMICS_PER_PAGE
+    page_comics = all_in_series[start:end]
+    pages = max(1, (total + COMICS_PER_PAGE - 1) // COMICS_PER_PAGE)
+
+    return jsonify({
+        'series': series_name,
+        'comics': [_serialize_comic_for_grid(c) for c in page_comics],
+        'pagination': {
+            'page': comic_page,
+            'pages': pages,
+            'total': total,
+            'per_page': COMICS_PER_PAGE,
+            'has_prev': comic_page > 1,
+            'has_next': comic_page < pages,
+            'prev_num': comic_page - 1 if comic_page > 1 else None,
+            'next_num': comic_page + 1 if comic_page < pages else None,
+        },
+    })
 
 @comics_bp.route('/comics/new', methods=['GET', 'POST'])
 @login_required
@@ -2109,6 +606,17 @@ def new():
             issue_number=form.issue_number.data,
             publisher=form.publisher.data,
             characters=form.characters.data,
+            writer=form.writer.data,
+            artist=form.artist.data,
+            colorist=form.colorist.data,
+            letterer=form.letterer.data,
+            editor=form.editor.data,
+            cover_artist=form.cover_artist.data,
+            teams=form.teams.data,
+            story_arc=form.story_arc.data,
+            description=form.description.data,
+            comicvine_issue_id=_parse_comicvine_issue_id(form.comicvine_issue_id.data),
+            comicvine_url=(request.form.get('comicvine_url') or '').strip() or None,
             genre=form.genre.data,
             release_date=form.release_date.data,
             upc=form.upc.data,
@@ -2120,35 +628,7 @@ def new():
             user_id=current_user.id
         )
         
-        # Handle cover image upload or fetched cover
-        fetched_cover_blob = request.form.get('fetched_cover_blob')
-        fetched_cover_mime = request.form.get('fetched_cover_mime')
-        additional_covers = request.form.get('additional_covers')
-        
-        if fetched_cover_blob:
-            # Convert base64 BLOB data to binary
-            import base64
-            try:
-                blob_data = base64.b64decode(fetched_cover_blob)
-                comic.cover_image = blob_data
-                comic.cover_image_mime = fetched_cover_mime or 'image/jpeg'
-            except Exception as e:
-                print(f"Error decoding BLOB data: {e}")
-                flash('Error processing cover image. Please try again.', 'danger')
-            
-            # Handle additional covers if provided
-            if additional_covers:
-                try:
-                    import json
-                    covers_list = json.loads(additional_covers)
-                    comic.set_additional_covers(covers_list)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        elif form.cover_image.data and hasattr(form.cover_image.data, 'filename'):
-            image_data = save_cover_image(form.cover_image.data)
-            if image_data:
-                comic.cover_image = image_data['blob_data']
-                comic.cover_image_mime = image_data['mime_type']
+        _apply_form_cover_updates(comic, form)
         
         try:
             db.session.add(comic)
@@ -2166,13 +646,20 @@ def new():
 def show(id):
     """Display a specific comic."""
     comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
-    return render_template('comics/show.html', title=comic.title, comic=comic)
+    collection_return_url = _collection_return_url(comic, request.args.get('next', ''))
+    return render_template(
+        'comics/show.html',
+        title=comic.title,
+        comic=comic,
+        collection_return_url=collection_return_url,
+    )
 
 @comics_bp.route('/comics/<int:id>/edit', methods=['GET', 'POST'])
 @login_required
 def edit(id):
     """Edit an existing comic."""
     comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
+    collection_return_url = _collection_return_url(comic, request.args.get('next', ''))
     form = ComicForm(obj=comic)
     series_options = Series.query.order_by(Series.name.asc(), Series.volume.asc()).all()
     
@@ -2183,6 +670,18 @@ def edit(id):
         comic.issue_number = form.issue_number.data
         comic.publisher = form.publisher.data
         comic.characters = form.characters.data
+        comic.writer = form.writer.data
+        comic.artist = form.artist.data
+        comic.colorist = form.colorist.data
+        comic.letterer = form.letterer.data
+        comic.editor = form.editor.data
+        comic.cover_artist = form.cover_artist.data
+        comic.teams = form.teams.data
+        comic.story_arc = form.story_arc.data
+        comic.description = form.description.data
+        comic.comicvine_issue_id = _parse_comicvine_issue_id(form.comicvine_issue_id.data)
+        if request.form.get('comicvine_url'):
+            comic.comicvine_url = request.form.get('comicvine_url').strip() or None
         comic.genre = form.genre.data
         comic.release_date = form.release_date.data
         comic.upc = form.upc.data
@@ -2192,46 +691,79 @@ def edit(id):
         comic.notes = form.notes.data
         comic.is_wishlist = form.is_wishlist.data
         
-        # Handle cover image upload or fetched cover
-        fetched_cover_blob = request.form.get('fetched_cover_blob')
-        fetched_cover_mime = request.form.get('fetched_cover_mime')
-        additional_covers = request.form.get('additional_covers')
-        
-        if fetched_cover_blob:
-            # Convert base64 BLOB data to binary
-            import base64
-            try:
-                blob_data = base64.b64decode(fetched_cover_blob)
-                comic.cover_image = blob_data
-                comic.cover_image_mime = fetched_cover_mime or 'image/jpeg'
-            except Exception as e:
-                print(f"Error decoding BLOB data: {e}")
-                flash('Error processing cover image. Please try again.', 'danger')
-            
-            # Handle additional covers if provided
-            if additional_covers:
-                try:
-                    import json
-                    covers_list = json.loads(additional_covers)
-                    comic.set_additional_covers(covers_list)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        elif form.cover_image.data and hasattr(form.cover_image.data, 'filename'):
-            image_data = save_cover_image(form.cover_image.data)
-            if image_data:
-                # With BLOB storage, we don't need to delete old files
-                comic.cover_image = image_data['blob_data']
-                comic.cover_image_mime = image_data['mime_type']
+        _apply_form_cover_updates(comic, form)
         
         try:
             db.session.commit()
             flash('Comic updated successfully!', 'success')
-            return redirect(url_for('comics.show', id=comic.id))
+            return redirect(url_for('comics.show', id=comic.id, next=collection_return_url))
         except Exception as e:
             db.session.rollback()
             flash('Error updating comic. Please try again.', 'danger')
     
-    return render_template('comics/form.html', title='Edit Comic', form=form, comic=comic, series_options=series_options)
+    return render_template(
+        'comics/form.html',
+        title='Edit Comic',
+        form=form,
+        comic=comic,
+        series_options=series_options,
+        collection_return_url=collection_return_url,
+    )
+
+
+@comics_bp.route('/comics/<int:id>/covers', methods=['POST'])
+@login_required
+def save_cover_variant(id):
+    """Store one cover variant at a time to avoid a large combined form POST."""
+    import base64
+    import binascii
+
+    comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
+    payload = request.get_json(silent=True) or {}
+    cover = payload.get('cover')
+
+    if not isinstance(cover, dict) or not cover.get('blob_data'):
+        return jsonify({'error': 'A cover image is required.'}), 400
+
+    try:
+        blob_data = base64.b64decode(cover['blob_data'], validate=True)
+    except (ValueError, TypeError, binascii.Error):
+        return jsonify({'error': 'The cover image data is invalid.'}), 400
+
+    if not blob_data:
+        return jsonify({'error': 'The cover image is empty.'}), 400
+
+    mime_type = str(cover.get('mime_type') or 'image/jpeg')[:100]
+    label = str(cover.get('label') or 'Cover')[:200]
+
+    if payload.get('replace'):
+        comic.cover_image = blob_data
+        comic.cover_image_mime = mime_type
+        comic.cover_variants.clear()
+    else:
+        try:
+            position = int(payload.get('position'))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'A cover position is required.'}), 400
+        if position < 1:
+            return jsonify({'error': 'The cover position is invalid.'}), 400
+
+        variant = ComicCover.query.filter_by(comic_id=comic.id, position=position).first()
+        if variant is None:
+            variant = ComicCover(comic_id=comic.id, position=position)
+            db.session.add(variant)
+        variant.image_data = blob_data
+        variant.mime_type = mime_type
+        variant.label = label
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Could not save this cover image.'}), 500
+
+    return jsonify({'success': True})
+
 
 @comics_bp.route('/comics/<int:id>/delete', methods=['POST'])
 @login_required
@@ -2251,7 +783,22 @@ def delete(id):
         print(f"Error deleting comic {id}: {e}")
         flash('Error deleting comic. Please try again.', 'danger')
     
-    return redirect(url_for('comics.index'))
+    next_url = _safe_redirect_target(request.form.get('next'))
+    return redirect(next_url or url_for('comics.index'))
+
+@comics_bp.route('/comics/<int:id>/cover')
+@login_required
+def serve_cover_image(id):
+    """Serve cover image from BLOB data."""
+    comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
+
+    if not comic.cover_image:
+        return jsonify({'error': 'No cover image found'}), 404
+
+    response = make_response(BytesIO(comic.cover_image).read())
+    response.headers.set('Content-Type', comic.cover_image_mime or 'image/jpeg')
+    response.headers.set('Content-Disposition', 'inline')
+    return response
 
 @comics_bp.route('/comics/export')
 @login_required
@@ -2266,8 +813,9 @@ def export():
     cw = csv.writer(si)
     
     # Write header
-    cw.writerow(['Title', 'Issue Number', 'Publisher', 'Characters', 'Genre', 
-                 'Release Date', 'Condition', 'Estimated Value', 'Notes'])
+    cw.writerow(['Title', 'Issue Number', 'Publisher', 'Writer', 'Artist', 'Characters',
+                 'Story Arc', 'Genre', 'Release Date', 'Condition', 'Estimated Value',
+                 'Description', 'Notes'])
     
     # Write data
     for comic in comics:
@@ -2275,11 +823,15 @@ def export():
             comic.title,
             comic.issue_number,
             comic.publisher,
+            comic.writer or '',
+            comic.artist or '',
             comic.characters or '',
+            comic.story_arc or '',
             comic.genre or '',
             comic.release_date.strftime('%Y-%m-%d') if comic.release_date else '',
             comic.condition or '',
             comic.estimated_value or 0.0,
+            comic.description or '',
             comic.notes or ''
         ])
     
@@ -2308,265 +860,165 @@ def wishlist():
                          title='Wishlist',
                          comics=wishlist_comics)
 
+@comics_bp.route('/comics/bulk-add/parse', methods=['POST'])
+@login_required
+def bulk_add_parse():
+    """Parse an issue-range string and return the expanded issue list."""
+    data = request.get_json(silent=True) or {}
+    ranges_text = (data.get('issue_ranges') or '').strip()
+    if not ranges_text:
+        return jsonify({'error': 'Enter issue ranges (e.g. 1-32 or 1-14, 16-22).'}), 400
+    try:
+        issues = parse_issue_ranges(ranges_text)
+        return jsonify({'issues': issues, 'count': len(issues)})
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@comics_bp.route('/comics/bulk-add/issue', methods=['POST'])
+@login_required
+def bulk_add_issue():
+    """Look up and add a single issue (used by bulk-add UI for progress feedback)."""
+    data = request.get_json(silent=True) or {}
+    series = (data.get('series') or '').strip()
+    issue_number = (data.get('issue_number') or '').strip()
+    start_year = data.get('start_year')
+    volume_hint = (data.get('volume_hint') or '').strip() or None
+    volume_id = data.get('volume_id')
+    condition = (data.get('condition') or '').strip()
+    skip_existing = data.get('skip_existing', True)
+
+    if start_year not in (None, ''):
+        try:
+            start_year = int(start_year)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Start year must be a four-digit year.'}), 400
+    else:
+        start_year = None
+
+    if volume_id not in (None, ''):
+        try:
+            volume_id = int(volume_id)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Volume id must be a number.'}), 400
+    else:
+        volume_id = None
+
+    api_key = current_app.config.get('COMICVINE_API_KEY', '')
+    result = bulk_add_single_issue(
+        user_id=current_user.id,
+        series=series,
+        issue_number=issue_number,
+        api_key=api_key,
+        start_year=start_year,
+        volume_hint=volume_hint,
+        volume_id=volume_id,
+        condition=condition,
+        skip_existing=bool(skip_existing),
+    )
+    status_code = 503 if (
+        result.get('status') == 'failed'
+        and 'ComicVine API key' in result.get('error', '')
+    ) else 200
+    return jsonify(result), status_code
+
+
+@comics_bp.route('/comics/volumes/lookup')
+@login_required
+def volumes_lookup():
+    """List ComicVine and local catalog volumes for a series name (pick by year/volume)."""
+    series = request.args.get('series', '').strip()
+    year = request.args.get('year', type=int)
+    publisher = request.args.get('publisher', '').strip()
+    search_comicvine = request.args.get('comicvine', '1') == '1'
+    search_local = request.args.get('local', '1') == '1'
+    na_publishers_only = _na_publishers_only_from_request()
+
+    if not series:
+        return jsonify({'error': 'Enter a series name to browse volumes.'}), 400
+
+    volumes = []
+    if search_local:
+        volumes.extend(search_local_series_volumes(series, publisher=publisher))
+
+    api_key = current_app.config.get('COMICVINE_API_KEY', '')
+    if search_comicvine:
+        if not api_key:
+            if not volumes:
+                return jsonify({
+                    'error': 'ComicVine API key is not configured. Add COMICVINE_API_KEY to your .env file.',
+                    'volumes': [],
+                }), 503
+        else:
+            try:
+                volumes.extend(search_comicvine_volumes(
+                    series, api_key, year=year, publisher=publisher,
+                    na_publishers_only=na_publishers_only,
+                ))
+            except requests.RequestException as exc:
+                if not volumes:
+                    return jsonify({'error': f'ComicVine volume lookup failed: {exc}', 'volumes': []}), 502
+
+    if not volumes:
+        return jsonify({'error': f'No volumes found for "{series}".', 'volumes': []}), 404
+
+    def _sort_key(vol):
+        year_val = vol.get('start_year') or ''
+        year_num = int(year_val) if str(year_val).isdigit() else 9999
+        return (year_num, vol.get('publisher', '').lower(), vol.get('display_name', '').lower())
+
+    volumes.sort(key=_sort_key)
+    return jsonify({'volumes': volumes, 'count': len(volumes)})
+
+
 @comics_bp.route('/comics/search-api')
 @login_required
 def search_api():
-    """Search for comics via ComicVine and locally stored series metadata."""
+    """Search for comics via ComicVine, barcode APIs, and the local Series Catalog."""
     query = request.args.get('q', '').strip()
     series_name = request.args.get('series_name', '').strip()
     issue_number = request.args.get('issue_number', '').strip()
+    volume_id = request.args.get('volume_id', type=int)
+    local_series_id = request.args.get('local_series_id', type=int)
     search_comicvine = request.args.get('comicvine', '1') == '1'
     search_local = request.args.get('local', '1') == '1'
-    
-    print(f"🔍 Search API called with query='{query}', series='{series_name}', issue='{issue_number}'")
-    print(f"🔍 Search sources: ComicVine={search_comicvine}, Local={search_local}")
-    
-    if not any([query, series_name, issue_number]):
-        print("❌ No search parameters provided")
-        return jsonify({'error': 'Provide at least a query or select a series/issue'}), 400
-    
+    na_publishers_only = _na_publishers_only_from_request()
+
+    if not any([query, series_name, issue_number, volume_id, local_series_id]):
+        return jsonify({'error': 'Provide at least a query, series/issue, or selected volume'}), 400
+
+    comicvine_key = current_app.config.get('COMICVINE_API_KEY', '')
+    if search_comicvine and not comicvine_key:
+        if not search_local:
+            return jsonify({
+                'error': 'ComicVine API key is not configured. Add COMICVINE_API_KEY to your .env file.',
+                'results': [],
+            }), 503
+        search_comicvine = False
+
     try:
-        # ComicVine API search
-        api_key = current_app.config.get('COMICVINE_API_KEY', '')
-        print(f"🔑 API Key configured: {'Yes' if api_key else 'No'}")
-        print(f"🔑 API Key length: {len(api_key) if api_key else 0}")
-        print(f"🔑 API Key preview: {api_key[:10] if api_key else 'None'}...")
-        print(f"🔑 Full API Key: '{api_key}'")
-        
-        # Check if API key looks valid (ComicVine keys are typically 40+ characters)
-        effective_query = query or series_name or issue_number
-        if not api_key:
-            print("⚠️ No API key found, returning enhanced mock data")
-            
-            # Enhanced mock data based on search query
-            query_lower = (effective_query or '').lower()
-            mock_results = []
-            
-            if 'iron' in query_lower and 'man' in query_lower:
-                mock_results = [
-                    {
-                        'id': 1,
-                        'title': 'Invincible Iron Man',
-                        'issue_number': '1',
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Iron Man, Tony Stark, Pepper Potts',
-                        'genre': 'Superhero',
-                        'release_date': '2008-05-07',
-                        'description': 'The beginning of the Invincible Iron Man series',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '75960607800100111',
-                        'isbn': ''
-                    },
-                    {
-                        'id': 2,
-                        'title': 'Iron Man',
-                        'issue_number': '1',
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Iron Man, Tony Stark',
-                        'genre': 'Superhero',
-                        'release_date': '1968-05-01',
-                        'description': 'The first appearance of Iron Man',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '75960607800100112',
-                        'isbn': ''
-                    },
-                    {
-                        'id': 3,
-                        'title': 'Iron Man 2.0',
-                        'issue_number': '1',
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Iron Man, James Rhodes',
-                        'genre': 'Superhero',
-                        'release_date': '2011-01-26',
-                        'description': 'James Rhodes takes on the Iron Man mantle',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '75960607800100113',
-                        'isbn': ''
-                    }
-                ]
-            elif 'spider' in query_lower:
-                mock_results = [
-                    {
-                        'id': 4,
-                        'title': 'Amazing Spider-Man',
-                        'issue_number': '1',
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Spider-Man, Peter Parker, Uncle Ben',
-                        'genre': 'Superhero',
-                        'release_date': '1963-03-01',
-                        'description': 'The first appearance of Spider-Man',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '75960607800100114',
-                        'isbn': ''
-                    },
-                    {
-                        'id': 5,
-                        'title': 'Ultimate Spider-Man',
-                        'issue_number': '1',
-                        'publisher': 'Marvel Comics',
-                        'characters': 'Spider-Man, Peter Parker, Mary Jane',
-                        'genre': 'Superhero',
-                        'release_date': '2000-10-03',
-                        'description': 'The Ultimate Universe version of Spider-Man',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '75960607800100115',
-                        'isbn': ''
-                    }
-                ]
-            elif 'batman' in query_lower:
-                mock_results = [
-                    {
-                        'id': 6,
-                        'title': 'Batman',
-                        'issue_number': '1',
-                        'publisher': 'DC Comics',
-                        'characters': 'Batman, Bruce Wayne, Commissioner Gordon',
-                        'genre': 'Superhero',
-                        'release_date': '1940-03-01',
-                        'description': 'The first appearance of Batman',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '76194126700100116',
-                        'isbn': ''
-                    },
-                    {
-                        'id': 7,
-                        'title': 'Batman: The Dark Knight Returns',
-                        'issue_number': '1',
-                        'publisher': 'DC Comics',
-                        'characters': 'Batman, Bruce Wayne',
-                        'genre': 'Superhero',
-                        'release_date': '1986-02-01',
-                        'description': 'Frank Miller\'s iconic Batman story',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '76194126700100117',
-                        'isbn': ''
-                    }
-                ]
-            else:
-                # Generic results for other searches
-                mock_results = [
-                    {
-                        'id': 8,
-                        'title': f'Search Results for "{effective_query}"',
-                        'issue_number': '1',
-                        'publisher': 'Various Publishers',
-                        'characters': 'Various Characters',
-                        'genre': 'Various Genres',
-                        'release_date': '2023-01-01',
-                        'description': f'Search results for "{effective_query}" - API key may need to be updated',
-                        'cover_image_url': '',
-                        'volume': 'Volume 1',
-                        'upc': '123456789012',
-                        'isbn': ''
-                    }
-                ]
-            
-            print(f"📚 Returning {len(mock_results)} mock results for query: '{effective_query}'")
-            return jsonify({'results': mock_results, 'source': 'mock_data'})
-        
-        # Multi-API search system based on user selection
-        all_results = []
-        
-        # 1. ComicVine API (if selected)
-        if search_comicvine:
-            print("🔍 Searching ComicVine API...")
-            comicvine_results = search_comicvine_api(query, api_key)
-            all_results.extend(comicvine_results)
-            print(f"📚 ComicVine found: {len(comicvine_results)} results")
-        else:
-            print("⏭️ Skipping ComicVine search (not selected)")
-        
-        # Local database search (Series catalog)
-        if search_local:
-            print("🔍 Searching local database...")
-            local_results = search_local_database(query, series_name=series_name, issue_number=issue_number)
-            all_results.extend(local_results)
-            print(f"📚 Local catalog found: {len(local_results)} results")
-        else:
-            print("⏭️ Skipping local search (not selected)")
-        
-        # Debug: Show all results by source
-        print(f"\n📊 Final Results Summary:")
-        comicvine_count = len([r for r in all_results if r.get('source') == 'ComicVine'])
-        series_catalog_count = len([r for r in all_results if r.get('source') == 'Series Catalog'])
-        
-        print(f"   ComicVine: {comicvine_count}")
-        print(f"   Series Catalog: {series_catalog_count}")
-        print(f"   Total: {len(all_results)}")
-        
-        # Remove duplicates based on title and issue number
-        unique_results = []
-        seen_titles = set()
-        for result in all_results:
-            title_key = f"{result.get('title', '')}_{result.get('issue_number', '')}"
-            if title_key not in seen_titles:
-                seen_titles.add(title_key)
-                unique_results.append(result)
-        
-        print(f"📚 Total unique results: {len(unique_results)}")
-        
-        # Process the results for JSON response
-        results = []
-        for issue in unique_results:
-            result = {
-                'id': issue.get('id'),
-                'comicvine_id': issue.get('comicvine_id'),
-                'title': issue.get('title', issue.get('name', '')),
-                'issue_title': issue.get('issue_title', ''),
-                'series': issue.get('series', ''),
-                'issue_number': issue.get('issue_number', ''),
-                'publisher': issue.get('publisher', ''),
-                'characters': issue.get('characters', ''),
-                'genre': issue.get('genre', 'Superhero'),
-                'release_date': issue.get('release_date', ''),
-                'cover_date': issue.get('cover_date', ''),
-                'description': issue.get('description', ''),
-                'cover_image_url': issue.get('cover_image_url', ''),
-                'cover_images': issue.get('cover_images', []),
-                'volume': issue.get('volume', ''),
-                'volume_start_year': issue.get('volume_start_year', ''),
-                'upc': issue.get('upc', ''),
-                'isbn': issue.get('isbn', ''),
-                'source': issue.get('source', 'Unknown'),
-                'has_variants_endpoint': bool(issue.get('has_variants_endpoint')),
-            }
-            results.append(result)
-            
-            # Log barcode information
-            barcode_info = []
-            if result['upc']:
-                barcode_info.append(f"UPC: {result['upc']}")
-            if result['isbn']:
-                barcode_info.append(f"ISBN: {result['isbn']}")
-            barcode_text = ' | '.join(barcode_info) if barcode_info else 'No barcode'
-            print(f"📖 Processed result: {result['title']} #{result['issue_number']} ({barcode_text})")
-        
-        print(f"✅ Returning {len(results)} results")
-        return jsonify({'results': results})
-        
-    except requests.RequestException as e:
-        print(f"❌ API request failed: {e}")
-        print(f"🔍 Request details: {e.request.url if hasattr(e, 'request') else 'No request info'}")
-        # Fallback to local search if API fails
-        try:
-            print("🔄 Falling back to local search (series catalog)...")
-            local_results = search_local_database(query, series_name=series_name, issue_number=issue_number)
-            print(f"📚 Local catalog fallback found {len(local_results)} results")
-            return jsonify({'results': local_results, 'source': 'Series Catalog'})
-        except Exception as local_error:
-            print(f"❌ Local search also failed: {local_error}")
-            return jsonify({'error': f'Search failed: {str(e)}'}), 500
-        
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        return jsonify({'error': f'Search failed: {str(e)}'}), 500
+        started = time.perf_counter()
+        results = run_comic_search(
+            query=query,
+            series_name=series_name,
+            issue_number=issue_number,
+            search_comicvine=search_comicvine,
+            search_local=search_local,
+            comicvine_api_key=comicvine_key,
+            upc_api_key=current_app.config.get('UPC_DATABASE_API_KEY', ''),
+            barcode_api_key=current_app.config.get('BARCODE_LOOKUP_API_KEY', ''),
+            volume_id=volume_id,
+            local_series_id=local_series_id,
+            na_publishers_only=na_publishers_only,
+        )
+        payload = {'results': results}
+        if current_app.debug:
+            payload['elapsed_ms'] = round((time.perf_counter() - started) * 1000)
+        return jsonify(payload)
+    except requests.RequestException as exc:
+        return jsonify({'error': f'Search failed: {exc}'}), 502
+    except Exception as exc:
+        return jsonify({'error': f'Search failed: {exc}'}), 500
 
 @comics_bp.route('/comics/fetch-cover')
 @login_required
@@ -2716,169 +1168,12 @@ def fetch_multiple_covers():
     except Exception as e:
         return jsonify({'error': f'Failed to download covers: {str(e)}'}), 500
 
-@comics_bp.route('/comics/test-search')
-def test_search():
-    """Test route to verify search functionality."""
-    api_key = current_app.config.get('COMICVINE_API_KEY', '')
-    return jsonify({
-        'status': 'Search API is working',
-        'api_key_configured': bool(api_key),
-        'api_key_length': len(api_key) if api_key else 0,
-        'api_key_preview': api_key[:10] + '...' if api_key else 'None',
-        'message': 'Try searching for "Spider-Man" or "Batman"',
-        'env_file_exists': 'Check if .env file exists in project root'
-    })
-
 @comics_bp.route('/uploads/<filename>')
+@login_required
 def uploaded_file(filename):
     """Serve uploaded cover images (legacy support)."""
     from flask import send_from_directory
     return send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
-
-@comics_bp.route('/comics/<int:id>/cover')
-@login_required
-def serve_cover_image(id):
-    """Serve cover image from BLOB data."""
-    comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
-    
-    if not comic.cover_image:
-        return jsonify({'error': 'No cover image found'}), 404
-    
-    # Convert BLOB data to response
-    from io import BytesIO
-    from flask import make_response
-    response = make_response(BytesIO(comic.cover_image).read())
-    response.headers.set('Content-Type', comic.cover_image_mime or 'image/jpeg')
-    response.headers.set('Content-Disposition', 'inline')
-    
-    return response
-
-def test_url_accessibility(url):
-    """Test if a URL is accessible and return status."""
-    try:
-        response = requests.get(url, timeout=10)
-        return response.status_code == 200
-    except:
-        return False
-
-def get_direct_variant_covers(search_term, issue_number=None):
-    """
-    Direct mapping of search terms to known issue IDs and their variant covers.
-    This bypasses the search API for comics we know have variants.
-    """
-    # Normalize the search term
-    search_lower = search_term.lower().strip()
-    print(f"🔍 Direct mapping check for: '{search_term}' -> '{search_lower}' (issue: {issue_number})")
-    
-    # Direct mappings for known comics with variants
-    direct_mappings = {
-        'civil war ii choosing sides 5': {
-            'issue_id': '547272',
-            'title': 'Civil War II: Choosing Sides #5',
-            'publisher': 'Marvel',
-            'variant_covers': [
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408871-05.jpg',
-                    'label': 'Regular Cover (Marko Djurdjevic)'
-                },
-                {
-                    'size': 'medium', 
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_large/6/67663/5410438-05-variant.jpg',
-                    'label': 'Connecting Variant Cover D (Kim Jung Gi)'
-                },
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/0/40/5282380-civil_war_ii_1_marquez_variant.jpg',
-                    'label': 'Variant Cover (Michael Cho)'
-                },
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/14/148518/2905922-cameron_stewart.jpg',
-                    'label': 'Variant Cover (Phil Noto)'
-                },
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/11161/111615891/9663783-cover.jpg',
-                    'label': 'Variant Cover (Additional)'
-                }
-            ]
-        },
-        'civil war ii choosing sides 1': {
-            'issue_id': '537230',
-            'title': 'Civil War II: Choosing Sides #1',
-            'publisher': 'Marvel',
-            'variant_covers': [
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/6/67663/5408871-05.jpg',
-                    'label': 'Regular Cover'
-                },
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/0/4/41653-6604-47231-1-day-of-judgment.jpg',
-                    'label': 'Variant Cover A'
-                },
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/11115/111152052/5710948-civil%20war%20ii%202%20-%20f%C3%A9vrier%202017%20-%20couverture%201%20sur%202.jpg',
-                    'label': 'Variant Cover B'
-                },
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/11112/111121983/5524943-8872309352-image_gallery',
-                    'label': 'Variant Cover C'
-                },
-                {
-                    'size': 'medium',
-                    'url': 'https://comicvine.gamespot.com/a/uploads/scale_medium/11115/111152052/5963386-civil%20war%20ii%20extra%205%20-%20juin%202017.jpg',
-                    'label': 'Variant Cover D'
-                }
-            ]
-        }
-    }
-    
-    # Check for exact matches first
-    if search_lower in direct_mappings:
-        print(f"🎯 Found direct mapping for: {search_term}")
-        mapping = direct_mappings[search_lower]
-        
-        # Test all URLs in the mapping
-        print(f"🔍 Testing {len(mapping['variant_covers'])} variant cover URLs...")
-        for i, cover in enumerate(mapping['variant_covers']):
-            url = cover['url']
-            label = cover['label']
-            if test_url_accessibility(url):
-                print(f"✅ URL {i+1} accessible: {label}")
-            else:
-                print(f"❌ URL {i+1} failed: {label} - {url}")
-        
-        return mapping
-    
-    # Check for partial matches with priority for Civil War II: Choosing Sides #5
-    if 'civil war ii' in search_lower and 'choosing sides' in search_lower and '5' in search_lower:
-        print(f"🎯 Found Civil War II: Choosing Sides #5 match for: {search_term}")
-        return direct_mappings['civil war ii choosing sides 5']
-    
-    # Also check for variations of the search term
-    if 'civil war ii choosing sides 5' in search_lower or 'civil war ii: choosing sides 5' in search_lower:
-        print(f"🎯 Found exact Civil War II: Choosing Sides #5 match for: {search_term}")
-        return direct_mappings['civil war ii choosing sides 5']
-    
-    # Check for partial matches
-    for key, value in direct_mappings.items():
-        if search_lower in key or key in search_lower:
-            print(f"🎯 Found partial mapping for: {search_term} -> {key}")
-            return value
-    
-    # Check if issue number is specified and matches
-    if issue_number:
-        for key, value in direct_mappings.items():
-            if issue_number in key:
-                print(f"🎯 Found issue number match for: {search_term} #{issue_number}")
-                return value
-    
-    return None
 
 @comics_bp.route('/comics/ai-value-lookup', methods=['POST'])
 @login_required

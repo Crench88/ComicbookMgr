@@ -15,6 +15,17 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+DEFAULT_MAX_REQUEST_SIZE = 64 * 1024 * 1024
+
+
+def _request_size_limit():
+    """Return the configured request limit, falling back to 64 MB."""
+    try:
+        return int(os.environ.get('MAX_CONTENT_LENGTH', DEFAULT_MAX_REQUEST_SIZE))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_REQUEST_SIZE
+
+
 # Initialize extensions
 db = SQLAlchemy()
 login_manager = LoginManager()
@@ -44,12 +55,16 @@ def create_app(test_config=None):
             SQLALCHEMY_DATABASE_URI=os.environ.get('DATABASE_URL', 'sqlite:///comicbook.db'),
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
             UPLOAD_FOLDER=os.path.join(app.instance_path, 'uploads'),
-            MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB max file size
+            # Cover variants are submitted as Base64 data, which can be much
+            # larger than one uploaded image. Keep both parsing limits aligned.
+            MAX_CONTENT_LENGTH=_request_size_limit(),
+            MAX_FORM_MEMORY_SIZE=_request_size_limit(),
             COMICVINE_API_KEY=os.environ.get('COMICVINE_API_KEY', ''),
             MARVEL_API_KEY=os.environ.get('MARVEL_API_KEY', ''),
             MARVEL_PRIVATE_KEY=os.environ.get('MARVEL_PRIVATE_KEY', ''),
             UPC_DATABASE_API_KEY=os.environ.get('UPC_DATABASE_API_KEY', ''),
             BARCODE_LOOKUP_API_KEY=os.environ.get('BARCODE_LOOKUP_API_KEY', ''),
+            CACHE_DIR=os.environ.get('CACHE_DIR', os.path.join('instance', 'cache')),
             # Email configuration
             MAIL_SERVER=os.environ.get('MAIL_SERVER', 'smtp.gmail.com'),
             MAIL_PORT=int(os.environ.get('MAIL_PORT', 587)),
@@ -60,6 +75,8 @@ def create_app(test_config=None):
         )
     else:
         app.config.from_mapping(test_config)
+        app.config.setdefault('SECRET_KEY', 'test-secret-key')
+        app.config.setdefault('UPLOAD_FOLDER', os.path.join(app.instance_path, 'uploads'))
     
     # Ensure instance folder exists
     try:
@@ -110,7 +127,20 @@ def create_app(test_config=None):
             return ''
         escaped = escape(value)
         return Markup('<br>'.join(escaped.splitlines()))
-    
+
+    @app.context_processor
+    def inject_theme():
+        from flask_login import current_user
+        from flask_wtf.csrf import generate_csrf
+        if current_user.is_authenticated:
+            theme_pref = current_user.get_preferred_theme()
+        else:
+            theme_pref = 'system'
+        return {
+            'user_theme_preference': theme_pref,
+            'csrf_token': generate_csrf(),
+        }
+
     # Create database tables
     with app.app_context():
         db.create_all()

@@ -2,262 +2,156 @@
 
 {% block title %}Dashboard{% endblock %}
 
-{% block extra_css %}
-<style>
-    .comic-cover-container {
-        position: relative;
-        height: 200px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background-color: #f8f9fa;
-        z-index: 1;
-    }
-    
-    .comic-cover {
-        transition: transform 0.3s ease;
-        height: 200px;
-        object-fit: contain;
-        cursor: pointer;
-        position: relative;
-        z-index: 2;
-    }
-    
-    .comic-cover-container:hover {
-        overflow: visible;
-        z-index: 10;
-    }
-    
-    .comic-cover-container:hover .comic-cover {
-        transform: scale(3);
-    }
-    
-    .card {
-        position: relative;
-        z-index: 1;
-    }
-    
-    .card:hover {
-        z-index: 10;
-    }
-</style>
-{% endblock %}
-
 {% block content %}
-<!-- Dashboard Header -->
-<div class="row mb-4">
-    <div class="col-12">
-        <h1 class="h2">Dashboard</h1>
-        <p class="text-muted">Welcome back, {{ current_user.username }}!</p>
+<div class="page-header">
+    <h1 class="h2">Dashboard</h1>
+    <p class="page-subtitle">Welcome back, {{ current_user.username }} — here's your collection at a glance.</p>
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card stat-card--primary">
+        <div>
+            <div class="stat-value">{{ total_comics }}</div>
+            <p class="stat-label">Total Comics</p>
+        </div>
+        <div class="stat-icon"><i class="bi bi-collection"></i></div>
+    </div>
+    <div class="stat-card stat-card--success">
+        <div>
+            <div class="stat-value">${{ "%.2f"|format(total_value) }}</div>
+            <p class="stat-label">Collection Value</p>
+        </div>
+        <div class="stat-icon"><i class="bi bi-currency-dollar"></i></div>
+    </div>
+    <div class="stat-card stat-card--warning">
+        <div>
+            <div class="stat-value">{{ wishlist_count }}</div>
+            <p class="stat-label">Wishlist Items</p>
+        </div>
+        <div class="stat-icon"><i class="bi bi-heart"></i></div>
+    </div>
+    <div class="stat-card stat-card--info">
+        <div>
+            <div class="stat-value">{{ top_publishers|length }}</div>
+            <p class="stat-label">Publishers</p>
+        </div>
+        <div class="stat-icon"><i class="bi bi-building"></i></div>
     </div>
 </div>
 
-<!-- Statistics Cards -->
-<div class="row mb-4">
-    <div class="col-md-3 mb-3">
-        <div class="card bg-primary text-white">
-            <div class="card-body">
-                <div class="d-flex justify-content-between">
-                    <div>
-                        <h4 class="card-title">{{ total_comics }}</h4>
-                        <p class="card-text">Total Comics</p>
-                    </div>
-                    <div class="align-self-center">
-                        <i class="bi bi-collection display-6"></i>
-                    </div>
-                </div>
-            </div>
+<div class="dashboard-grid">
+    <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+            <i class="bi bi-graph-up text-primary"></i>
+            <span>Top Publishers</span>
+        </div>
+        <div class="card-body analytics-list">
+            {% if top_publishers %}
+            <ul class="list-group list-group-flush">
+                {% for publisher, count in top_publishers %}
+                <li class="list-group-item">
+                    <span>{{ publisher }}</span>
+                    <span class="badge bg-primary rounded-pill">{{ count }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted mb-0">No publisher data yet. Add comics to see stats.</p>
+            {% endif %}
         </div>
     </div>
-    
-    <div class="col-md-3 mb-3">
-        <div class="card bg-success text-white">
-            <div class="card-body">
-                <div class="d-flex justify-content-between">
-                    <div>
-                        <h4 class="card-title">${{ "%.2f"|format(total_value) }}</h4>
-                        <p class="card-text">Total Value</p>
-                    </div>
-                    <div class="align-self-center">
-                        <i class="bi bi-currency-dollar display-6"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-3 mb-3">
-        <div class="card bg-warning text-white">
-            <div class="card-body">
-                <div class="d-flex justify-content-between">
-                    <div>
-                        <h4 class="card-title">{{ wishlist_count }}</h4>
-                        <p class="card-text">Wishlist Items</p>
-                    </div>
-                    <div class="align-self-center">
-                        <i class="bi bi-heart display-6"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-3 mb-3">
-        <div class="card bg-info text-white">
-            <div class="card-body">
-                <div class="d-flex justify-content-between">
-                    <div>
-                        <h4 class="card-title">{{ top_publishers|length }}</h4>
-                        <p class="card-text">Publishers</p>
-                    </div>
-                    <div class="align-self-center">
-                        <i class="bi bi-building display-6"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- Charts and Analytics -->
-<div class="row mb-4">
-    <!-- Top Publishers -->
-    <div class="col-md-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-graph-up"></i> Top Publishers
-                </h5>
-            </div>
-            <div class="card-body">
-                {% if top_publishers %}
-                    <div class="list-group list-group-flush">
-                        {% for publisher, count in top_publishers %}
-                        <div class="list-group-item d-flex justify-content-between align-items-center">
-                            {{ publisher }}
-                            <span class="badge bg-primary rounded-pill">{{ count }}</span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                {% else %}
-                    <p class="text-muted">No publishers data available.</p>
-                {% endif %}
-            </div>
+    <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+            <i class="bi bi-person text-primary"></i>
+            <span>Most Frequent Characters</span>
         </div>
-    </div>
-    
-    <!-- Top Characters -->
-    <div class="col-md-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-person"></i> Most Frequent Characters
-                </h5>
-            </div>
-            <div class="card-body">
-                {% if top_characters %}
-                    <div class="list-group list-group-flush">
-                        {% for character, count in top_characters %}
-                        <div class="list-group-item d-flex justify-content-between align-items-center">
-                            {{ character }}
-                            <span class="badge bg-success rounded-pill">{{ count }}</span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                {% else %}
-                    <p class="text-muted">No character data available.</p>
-                {% endif %}
-            </div>
+        <div class="card-body analytics-list">
+            {% if top_characters %}
+            <ul class="list-group list-group-flush">
+                {% for character, count in top_characters %}
+                <li class="list-group-item">
+                    <span>{{ character }}</span>
+                    <span class="badge bg-success rounded-pill">{{ count }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted mb-0">No character data yet.</p>
+            {% endif %}
         </div>
     </div>
 </div>
 
-<!-- Recent Additions -->
-<div class="row mb-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-clock-history"></i> Recent Additions
-                </h5>
-                <a href="{{ url_for('comics.index') }}" class="btn btn-sm btn-outline-primary">View All</a>
-            </div>
-            <div class="card-body">
-                {% if recent_comics %}
-                    <div class="row">
-                        {% for comic in recent_comics %}
-                        <div class="col-md-6 col-lg-4 mb-3">
-                            <div class="card h-100">
-                                {% if comic.has_cover_image() %}
-                                <div class="card-img-top comic-cover-container">
-                                    <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
-                                         class="comic-cover" alt="{{ comic.title }}">
-                                </div>
-                                {% else %}
-                                <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 
-                                     style="height: 200px;">
-                                    <i class="bi bi-image text-muted display-4"></i>
-                                </div>
-                                {% endif %}
-                                <div class="card-body">
-                                    <h6 class="card-title">{{ comic.title }} #{{ comic.issue_number }}</h6>
-                                    <p class="card-text text-muted">{{ comic.publisher }}</p>
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <small class="text-muted">{{ comic.get_formatted_release_date() }}</small>
-                                        <span class="badge bg-primary">{{ comic.get_formatted_value() }}</span>
-                                    </div>
-                                </div>
-                                <div class="card-footer">
-                                    <a href="{{ url_for('comics.show', id=comic.id) }}" 
-                                       class="btn btn-sm btn-outline-primary">View Details</a>
-                                </div>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                {% else %}
-                    <p class="text-muted">No comics in your collection yet. 
-                        <a href="{{ url_for('comics.new') }}">Add your first comic!</a>
-                    </p>
-                {% endif %}
-            </div>
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-clock-history text-primary"></i>
+            <span>Recent Additions</span>
         </div>
+        <a href="{{ url_for('comics.index') }}" class="btn btn-sm btn-outline-primary">View All</a>
+    </div>
+    <div class="card-body">
+        {% if recent_comics %}
+        <div class="comic-grid">
+            {% for comic in recent_comics %}
+            <article class="comic-card">
+                <div class="comic-card-cover">
+                    {% if comic.has_cover_image() %}
+                    <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}"
+                         alt="{{ comic.title }} cover">
+                    {% else %}
+                    <i class="bi bi-image text-muted" style="font-size: 2.5rem;"></i>
+                    {% endif %}
+                </div>
+                <div class="comic-card-body">
+                    <h6 class="comic-card-title">{{ comic.title }} #{{ comic.issue_number }}</h6>
+                    <p class="text-muted small mb-0">{{ comic.publisher }}</p>
+                    <div class="comic-card-meta">
+                        <span>{{ comic.get_formatted_release_date() }}</span>
+                        <span class="badge bg-primary">{{ comic.get_formatted_value() }}</span>
+                    </div>
+                </div>
+                <div class="card-footer border-0 pt-0 pb-3 px-3">
+                    <a href="{{ url_for('comics.show', id=comic.id) }}" class="btn btn-sm btn-outline-primary w-100">
+                        View Details
+                    </a>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state py-4">
+            <i class="bi bi-collection"></i>
+            <h3>No comics yet</h3>
+            <p class="text-muted">Start building your collection today.</p>
+            <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-1"></i> Add Your First Comic
+            </a>
+        </div>
+        {% endif %}
     </div>
 </div>
 
-<!-- Quick Actions -->
-<div class="row">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-lightning"></i> Quick Actions
-                </h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-3 mb-2">
-                        <a href="{{ url_for('comics.new') }}" class="btn btn-primary w-100">
-                            <i class="bi bi-plus-circle"></i> Add Comic
-                        </a>
-                    </div>
-                    <div class="col-md-3 mb-2">
-                        <a href="{{ url_for('comics.index') }}" class="btn btn-outline-primary w-100">
-                            <i class="bi bi-collection"></i> View Collection
-                        </a>
-                    </div>
-                    <div class="col-md-3 mb-2">
-                        <a href="{{ url_for('comics.wishlist') }}" class="btn btn-outline-warning w-100">
-                            <i class="bi bi-heart"></i> Wishlist
-                        </a>
-                    </div>
-                    <div class="col-md-3 mb-2">
-                        <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success w-100">
-                            <i class="bi bi-download"></i> Export Data
-                        </a>
-                    </div>
-                </div>
-            </div>
+<div class="card">
+    <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-lightning text-primary"></i>
+        <span>Quick Actions</span>
+    </div>
+    <div class="card-body">
+        <div class="quick-actions-grid">
+            <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-1"></i> Add Comic
+            </a>
+            <a href="{{ url_for('comics.index') }}" class="btn btn-outline-primary">
+                <i class="bi bi-collection me-1"></i> View Collection
+            </a>
+            <a href="{{ url_for('comics.wishlist') }}" class="btn btn-outline-warning">
+                <i class="bi bi-heart me-1"></i> Wishlist
+            </a>
+            <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success">
+                <i class="bi bi-download me-1"></i> Export Data
+            </a>
         </div>
     </div>
 </div>

@@ -3,178 +3,93 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<!-- Profile Header -->
-<div class="row mb-4">
-    <div class="col-12">
-        <h1 class="h2">Profile & Settings</h1>
-        <p class="text-muted">Manage your account settings and preferences</p>
-    </div>
+<div class="page-header">
+    <h1 class="h2">Profile &amp; Settings</h1>
+    <p class="page-subtitle">Manage your account and preferences</p>
 </div>
 
-<div class="row">
-    <!-- Account Information -->
-    <div class="col-md-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-person-circle"></i> Account Information
-                </h5>
-            </div>
-            <div class="card-body">
-                <div class="row mb-3">
-                    <div class="col-sm-4">
-                        <strong>Username:</strong>
-                    </div>
-                    <div class="col-sm-8">
-                        {{ current_user.username }}
-                    </div>
-                </div>
-                <div class="row mb-3">
-                    <div class="col-sm-4">
-                        <strong>Email:</strong>
-                    </div>
-                    <div class="col-sm-8">
-                        {{ current_user.email }}
-                    </div>
-                </div>
-                <div class="row mb-3">
-                    <div class="col-sm-4">
-                        <strong>Member Since:</strong>
-                    </div>
-                    <div class="col-sm-8">
-                        {{ current_user.created_at.strftime('%B %d, %Y') }}
-                    </div>
-                </div>
-                <div class="row mb-3">
-                    <div class="col-sm-4">
-                        <strong>Account Status:</strong>
-                    </div>
-                    <div class="col-sm-8">
-                        <span class="badge bg-success">Active</span>
-                    </div>
-                </div>
-            </div>
+<div class="profile-grid">
+    <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+            <i class="bi bi-person-circle text-primary"></i>
+            <span>Account Information</span>
         </div>
-    </div>
-    
-    <!-- Security Settings -->
-    <div class="col-md-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-shield-lock"></i> Security
-                </h5>
-            </div>
-            <div class="card-body">
-                <p class="text-muted mb-3">Manage your account security settings</p>
-                
-                <div class="d-grid gap-2">
-                    <a href="{{ url_for('auth.change_password') }}" class="btn btn-primary">
-                        <i class="bi bi-key"></i> Change Password
-                    </a>
-                    
-                    <button class="btn btn-outline-secondary" disabled>
-                        <i class="bi bi-shield-check"></i> Two-Factor Authentication
-                        <small class="text-muted d-block">Coming Soon</small>
-                    </button>
-                </div>
-                
-                <div class="mt-3">
-                    <small class="text-muted">
-                        <i class="bi bi-info-circle"></i>
-                        For your security, we recommend using a strong, unique password.
-                    </small>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+        <div class="card-body">
+            <dl class="row mb-0">
+                <dt class="col-sm-4 text-secondary">Username</dt>
+                <dd class="col-sm-8">{{ current_user.username }}</dd>
 
-<!-- Preferences -->
-<div class="row">
-    <div class="col-md-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-gear"></i> Preferences
-                </h5>
-            </div>
-            <div class="card-body">
-                <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="darkModeToggle" 
-                           {% if current_user.dark_mode_preference %}checked{% endif %}>
-                    <label class="form-check-label" for="darkModeToggle">
-                        Dark Mode
-                    </label>
-                </div>
-                
-                <small class="text-muted">
-                    <i class="bi bi-info-circle"></i>
-                    Toggle between light and dark themes for the application.
-                </small>
+                <dt class="col-sm-4 text-secondary">Email</dt>
+                <dd class="col-sm-8">{{ current_user.email }}</dd>
+
+                <dt class="col-sm-4 text-secondary">Member Since</dt>
+                <dd class="col-sm-8">{{ current_user.created_at.strftime('%B %d, %Y') }}</dd>
+
+                <dt class="col-sm-4 text-secondary">Status</dt>
+                <dd class="col-sm-8"><span class="badge bg-success">Active</span></dd>
+            </dl>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+            <i class="bi bi-shield-lock text-primary"></i>
+            <span>Security</span>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small">Manage your account security settings.</p>
+            <div class="d-grid gap-2">
+                <a href="{{ url_for('auth.change_password') }}" class="btn btn-primary">
+                    <i class="bi bi-key me-1"></i> Change Password
+                </a>
+                <button class="btn btn-outline-secondary" disabled>
+                    <i class="bi bi-shield-check me-1"></i> Two-Factor Authentication
+                    <small class="text-muted d-block">Coming Soon</small>
+                </button>
             </div>
         </div>
     </div>
-    
-    <!-- Quick Actions -->
-    <div class="col-md-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">
-                    <i class="bi bi-lightning"></i> Quick Actions
-                </h5>
+
+    <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+            <i class="bi bi-palette text-primary"></i>
+            <span>Appearance</span>
+        </div>
+        <div class="card-body">
+            <p class="settings-section-title">Theme</p>
+            <p class="text-muted small mb-3">Choose how ComicBook Manager looks. System follows your device setting.</p>
+            <div class="theme-switcher" id="profileThemeSwitcher" role="group" aria-label="Theme preference">
+                <button type="button" class="theme-switcher-btn" data-theme="light">
+                    <i class="bi bi-sun"></i><span class="label">Light</span>
+                </button>
+                <button type="button" class="theme-switcher-btn" data-theme="dark">
+                    <i class="bi bi-moon-stars"></i><span class="label">Dark</span>
+                </button>
+                <button type="button" class="theme-switcher-btn" data-theme="system">
+                    <i class="bi bi-laptop"></i><span class="label">System</span>
+                </button>
             </div>
-            <div class="card-body">
-                <div class="d-grid gap-2">
-                    <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-primary">
-                        <i class="bi bi-house"></i> Back to Dashboard
-                    </a>
-                    
-                    <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success">
-                        <i class="bi bi-download"></i> Export Collection
-                    </a>
-                    
-                    <a href="{{ url_for('auth.logout') }}" class="btn btn-outline-danger">
-                        <i class="bi bi-box-arrow-right"></i> Logout
-                    </a>
-                </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+            <i class="bi bi-lightning text-primary"></i>
+            <span>Quick Actions</span>
+        </div>
+        <div class="card-body">
+            <div class="d-grid gap-2">
+                <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-primary">
+                    <i class="bi bi-speedometer2 me-1"></i> Back to Dashboard
+                </a>
+                <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success">
+                    <i class="bi bi-download me-1"></i> Export Collection
+                </a>
+                <a href="{{ url_for('auth.logout') }}" class="btn btn-outline-danger">
+                    <i class="bi bi-box-arrow-right me-1"></i> Logout
+                </a>
             </div>
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-// Dark mode toggle functionality
-document.getElementById('darkModeToggle').addEventListener('change', function() {
-    const darkMode = this.checked;
-    
-    fetch('{{ url_for("main.update_dark_mode") }}', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            dark_mode: darkMode
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Reload the page to apply the theme change
-            location.reload();
-        } else {
-            console.error('Failed to update dark mode preference');
-            // Revert the toggle
-            this.checked = !darkMode;
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        // Revert the toggle
-        this.checked = !darkMode;
-    });
-});
-</script>
 {% endblock %}

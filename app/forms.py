@@ -5,7 +5,7 @@ Defines forms for user authentication and comic book management.
 
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileAllowed
-from wtforms import StringField, PasswordField, SubmitField, TextAreaField, SelectField, FloatField, DateField, BooleanField
+from wtforms import StringField, PasswordField, SubmitField, TextAreaField, SelectField, FloatField, DateField, BooleanField, HiddenField
 from wtforms.validators import DataRequired, Email, Length, EqualTo, ValidationError, Optional
 
 # Import db and User with error handling
@@ -78,7 +78,17 @@ class ComicForm(FlaskForm):
                         description='Series name (e.g., "The Amazing Spider-Man")')
     issue_number = StringField('Issue Number', validators=[DataRequired(), Length(max=20)])
     publisher = StringField('Publisher', validators=[DataRequired(), Length(max=100)])
-    characters = TextAreaField('Characters (comma-separated)', validators=[Optional(), Length(max=500)])
+    characters = TextAreaField('Characters (comma-separated)', validators=[Optional(), Length(max=2000)])
+    writer = TextAreaField('Writer(s)', validators=[Optional(), Length(max=1000)])
+    artist = TextAreaField('Artist(s)', validators=[Optional(), Length(max=1000)])
+    colorist = StringField('Colorist(s)', validators=[Optional(), Length(max=500)])
+    letterer = StringField('Letterer(s)', validators=[Optional(), Length(max=500)])
+    editor = StringField('Editor(s)', validators=[Optional(), Length(max=500)])
+    cover_artist = StringField('Cover Artist(s)', validators=[Optional(), Length(max=500)])
+    teams = TextAreaField('Teams', validators=[Optional(), Length(max=1000)])
+    story_arc = StringField('Story Arc', validators=[Optional(), Length(max=500)])
+    description = TextAreaField('Description / Synopsis', validators=[Optional(), Length(max=5000)])
+    comicvine_issue_id = HiddenField(validators=[Optional()])
     genre = StringField('Genre', validators=[Optional(), Length(max=100)])
     release_date = DateField('Release Date', validators=[Optional()], format='%Y-%m-%d')
     upc = StringField('UPC Code', validators=[Optional(), Length(max=20)], 
