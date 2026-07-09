@@ -113,7 +113,7 @@ def create_app(test_config=None):
     app.register_blueprint(admin_bp)
     
     # Import models for database creation
-    from .models import User, Comic, Series, SeriesIssue
+    from .models import User, Comic, ComicCover, Series, SeriesIssue
     
     # User loader for Flask-Login
     @login_manager.user_loader

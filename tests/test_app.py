@@ -477,6 +477,58 @@ class TestComicCoverVariants:
             assert comic.cover_image == b'primary-cover'
             assert comic.get_additional_covers()[0]['blob_data'] == alternate
 
+    def test_set_primary_cover_promotes_variant(self, client, test_user_id, app):
+        import base64
+
+        alt_blob = base64.b64encode(b'alternate-cover').decode('utf-8')
+
+        with app.app_context():
+            comic = Comic(
+                title='Cover Test',
+                series='Cover Series',
+                issue_number='1',
+                publisher='Marvel Comics',
+                user_id=test_user_id,
+                cover_image=b'primary-cover',
+                cover_image_mime='image/jpeg',
+            )
+            comic.set_additional_covers([{
+                'blob_data': alt_blob,
+                'mime_type': 'image/jpeg',
+                'label': 'Variant B',
+            }])
+            db.session.add(comic)
+            db.session.commit()
+            comic_id = comic.id
+            cover_id = comic.cover_variants[0].id
+
+        _login_as(client, test_user_id)
+        response = client.post(f'/comics/{comic_id}/covers/primary', json={
+            'cover_id': cover_id,
+        })
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert data['covers'][0]['is_primary'] is True
+
+        with app.app_context():
+            comic = db.session.get(Comic, comic_id)
+            assert comic.cover_image == b'alternate-cover'
+            assert len(comic.get_additional_covers()) == 1
+            assert comic.get_additional_covers()[0]['blob_data'] == base64.b64encode(b'primary-cover').decode('utf-8')
+
+        response = client.get(f'/comics/{comic_id}/covers/{cover_id}/image')
+        # After promotion the old cover id is gone; new alternate should still serve.
+        assert response.status_code in (200, 404)
+
+        with app.app_context():
+            comic = db.session.get(Comic, comic_id)
+            new_alt_id = comic.cover_variants[0].id
+
+        response = client.get(f'/comics/{comic_id}/covers/{new_alt_id}/image')
+        assert response.status_code == 200
+        assert response.data == b'primary-cover'
+
     def test_edit_swap_primary_and_store_alternates(self, client, test_user_id, app):
         import base64
 

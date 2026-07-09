@@ -512,12 +512,12 @@
                     
                     <!-- Submit Buttons -->
                     <div class="d-flex justify-content-between">
-                        <a href="{{ collection_return_url if comic else url_for('comics.index') }}" class="btn btn-secondary">
+                        <a href="{{ collection_return_url|default(url_for('comics.index')) if comic else url_for('comics.index') }}" class="btn btn-secondary">
                             <i class="bi bi-arrow-left"></i> Cancel
                         </a>
                         <div>
                             {% if comic %}
-                            <a href="{{ url_for('comics.show', id=comic.id, next=collection_return_url) }}" class="btn btn-outline-primary me-2">
+                            <a href="{{ url_for('comics.show', id=comic.id, next=collection_return_url|default(url_for('comics.index'))) }}" class="btn btn-outline-primary me-2">
                                 <i class="bi bi-eye"></i> View
                             </a>
                             {% endif %}
@@ -1665,7 +1665,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function setStoredCoverVariants(covers, markUpdated) {
         storedCoverVariants = covers.map((cover, index) => ({
-            blob_data: cover.blob_data,
+            id: cover.id || null,
+            blob_data: cover.blob_data || null,
             mime_type: cover.mime_type || 'image/jpeg',
             label: cover.label || (index === 0 ? 'Primary Cover' : `Cover ${index + 1}`),
             preview_url: cover.preview_url || null,
@@ -1676,8 +1677,57 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    function swapStoredPrimaryCover(index) {
+    async function swapStoredPrimaryCover(index) {
         if (index <= 0 || index >= storedCoverVariants.length) {
+            return;
+        }
+
+        const selected = storedCoverVariants[index];
+
+        // Already-saved variants can be promoted with a small API call.
+        // Newly downloaded Base64 covers still use the local swap + save flow.
+        if (selected.id && !selected.blob_data) {
+            setCoverStatus(`Setting "${selected.label}" as primary...`, 'info');
+            try {
+                const form = document.querySelector('form');
+                const response = await fetch('{{ url_for("comics.set_primary_cover", id=comic.id) }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': form?.querySelector('input[name="csrf_token"]')?.value || '',
+                    },
+                    body: JSON.stringify({ cover_id: selected.id }),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Could not update the primary cover.');
+                }
+                const variants = (data.covers || []).map((cover, coverIndex) => ({
+                    id: cover.id,
+                    blob_data: null,
+                    mime_type: 'image/jpeg',
+                    label: cover.label || (coverIndex === 0 ? 'Primary Cover' : `Cover ${coverIndex + 1}`),
+                    preview_url: cover.url,
+                }));
+                setStoredCoverVariants(variants, false);
+                setCoversUpdated(false);
+                const previewHost = document.getElementById('fetchedCoverPreview');
+                if (previewHost && variants[0]?.preview_url) {
+                    previewHost.innerHTML = `
+                        <small class="text-muted">Primary cover:</small>
+                        <img src="${variants[0].preview_url}" alt="Primary cover" class="img-thumbnail mt-1" style="max-height: 160px;">
+                    `;
+                }
+                setCoverStatus(`"${variants[0].label}" is now the primary cover.`, 'success');
+                setTimeout(clearCoverStatus, 5000);
+            } catch (error) {
+                setCoverStatus(`Could not set primary cover: ${error.message}`, 'danger');
+            }
+            return;
+        }
+
+        if (!selected.blob_data || !storedCoverVariants[0].blob_data) {
+            setCoverStatus('Reload the page, then set the primary cover again.', 'warning');
             return;
         }
 
@@ -1724,12 +1774,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function applyFetchedCoverBlobs(primaryCover, additionalCovers, label) {
         const primary = {
+            id: null,
             blob_data: primaryCover.blob_data,
             mime_type: primaryCover.mime_type || 'image/jpeg',
             label: label || 'Primary Cover',
             preview_url: null,
         };
         const additional = (additionalCovers || []).map((cover, index) => ({
+            id: null,
             blob_data: cover.blob_data,
             mime_type: cover.mime_type || 'image/jpeg',
             label: cover.label || `Cover ${index + 2}`,
@@ -2151,23 +2203,21 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     (function initStoredCoversFromServer() {
-        const initialStoredCovers = {{ comic.get_all_covers()|tojson }};
-        {% if comic.has_cover_image() %}
-        const primaryCoverUrl = '{{ url_for('comics.serve_cover_image', id=comic.id) }}';
-        {% else %}
-        const primaryCoverUrl = null;
-        {% endif %}
+        const variants = [
+            {% for cover in comic.list_cover_summaries() %}
+            {
+                id: {{ cover.id|tojson }},
+                blob_data: null,
+                mime_type: {{ (cover.mime_type or 'image/jpeg')|tojson }},
+                label: {{ cover.label|tojson }},
+                preview_url: {% if cover.is_primary %}{{ url_for('comics.serve_cover_image', id=comic.id)|tojson }}{% else %}{{ url_for('comics.serve_cover_variant_image', id=comic.id, cover_id=cover.id)|tojson }}{% endif %}
+            }{% if not loop.last %},{% endif %}
+            {% endfor %}
+        ];
 
-        if (!initialStoredCovers.length) {
+        if (!variants.length) {
             return;
         }
-
-        const variants = initialStoredCovers.map((cover, index) => ({
-            blob_data: cover.blob_data,
-            mime_type: cover.mime_type || 'image/jpeg',
-            label: cover.label || (index === 0 ? 'Primary Cover' : `Cover ${index + 1}`),
-            preview_url: index === 0 ? primaryCoverUrl : null,
-        }));
 
         setStoredCoverVariants(variants, false);
     })();

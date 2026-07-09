@@ -108,16 +108,33 @@ def _collection_return_url(comic, target: str = '') -> str:
     """Return a safe collection URL scoped to the comic's actual series."""
     from urllib.parse import parse_qsl, urlencode, urlparse
 
+    series_name = comic.series or 'Unknown Series'
     safe_target = _safe_redirect_target(target)
     if not safe_target:
-        return url_for('comics.index', series=(comic.series or 'Unknown Series'))
+        return url_for('comics.index', series=series_name)
 
     parsed = urlparse(safe_target)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query['series'] = comic.series or 'Unknown Series'
+    query['series'] = series_name
     # A prior series can have a different number of issue pages.
     query['comic_page'] = '1'
+    # Drop a stale series sidebar page so index can open the page that
+    # actually contains this comic's series.
+    query.pop('series_page', None)
     return parsed.path + '?' + urlencode(query)
+
+
+def _series_page_for_name(user_id, series_name, filter_kwargs):
+    """Return the 1-based series sidebar page that contains series_name."""
+    series_names = [
+        row.series_name
+        for row in _filter_series_query(user_id, **filter_kwargs).all()
+    ]
+    try:
+        index = series_names.index(series_name)
+    except ValueError:
+        return 1
+    return (index // SERIES_PER_PAGE) + 1
 
 
 def _apply_comic_filters(query, search_query='', publisher_filter='',
@@ -447,7 +464,7 @@ def index():
 
     if series_rows:
         series_names = [row['name'] for row in series_rows]
-        if selected_series not in series_names:
+        if selected_series and selected_series not in series_names:
             count_row = _filter_series_query(
                 current_user.id, **filter_kwargs,
             ).filter(
@@ -456,8 +473,21 @@ def index():
                     'Unknown Series',
                 ) == selected_series
             ).first()
-            if not count_row:
+            if count_row:
+                # Jump the sidebar to the page that contains this series.
+                needed_page = _series_page_for_name(
+                    current_user.id, selected_series, filter_kwargs,
+                )
+                if needed_page != series_page:
+                    args = request.args.to_dict(flat=True)
+                    args['series'] = selected_series
+                    args['series_page'] = needed_page
+                    args['comic_page'] = comic_page
+                    return redirect(url_for('comics.index', **args))
+            else:
                 selected_series = series_names[0]
+        elif not selected_series:
+            selected_series = series_names[0]
 
         selected_series_name = selected_series
         selected_series_count = next(
@@ -799,6 +829,59 @@ def serve_cover_image(id):
     response.headers.set('Content-Type', comic.cover_image_mime or 'image/jpeg')
     response.headers.set('Content-Disposition', 'inline')
     return response
+
+
+@comics_bp.route('/comics/<int:id>/covers/<int:cover_id>/image')
+@login_required
+def serve_cover_variant_image(id, cover_id):
+    """Serve one alternate cover image without embedding Base64 in HTML."""
+    comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
+    cover = ComicCover.query.filter_by(id=cover_id, comic_id=comic.id).first_or_404()
+
+    response = make_response(BytesIO(cover.image_data).read())
+    response.headers.set('Content-Type', cover.mime_type or 'image/jpeg')
+    response.headers.set('Content-Disposition', 'inline')
+    return response
+
+
+@comics_bp.route('/comics/<int:id>/covers/primary', methods=['POST'])
+@login_required
+def set_primary_cover(id):
+    """Promote an alternate cover to primary without a large form POST."""
+    comic = Comic.query.filter_by(id=id, user_id=current_user.id).first_or_404()
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        cover_id = int(payload.get('cover_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'A cover id is required.'}), 400
+
+    if not comic.set_primary_cover_variant(cover_id):
+        return jsonify({'error': 'That cover variant was not found.'}), 404
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Could not update the primary cover.'}), 500
+
+    return jsonify({
+        'success': True,
+        'covers': [
+            {
+                'id': cover['id'],
+                'is_primary': cover['is_primary'],
+                'label': cover['label'],
+                'url': (
+                    url_for('comics.serve_cover_image', id=comic.id)
+                    if cover['is_primary']
+                    else url_for('comics.serve_cover_variant_image', id=comic.id, cover_id=cover['id'])
+                ),
+            }
+            for cover in comic.list_cover_summaries()
+        ],
+    })
+
 
 @comics_bp.route('/comics/export')
 @login_required

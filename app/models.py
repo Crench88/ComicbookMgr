@@ -232,12 +232,13 @@ class Comic(db.Model):
         """Return alternate covers as Base64 dictionaries for the UI."""
         import base64
         return [{
+            'id': cover.id,
             'blob_data': base64.b64encode(cover.image_data).decode('utf-8'),
             'mime_type': cover.mime_type or 'image/jpeg',
             'label': cover.label or 'Cover',
             'is_primary': False,
         } for cover in self.cover_variants]
-    
+
     def set_additional_covers(self, covers_list):
         """Replace alternate cover rows from Base64 dictionaries."""
         import base64
@@ -262,30 +263,98 @@ class Comic(db.Model):
                     position=position,
                 ))
         self.additional_covers = None
-    
+
     def get_all_covers(self):
         """Return all covers including the primary cover with BLOB data."""
         covers = []
         if self.cover_image:
-            # Convert BLOB data to base64 for JSON serialization
             import base64
             blob_base64 = base64.b64encode(self.cover_image).decode('utf-8')
             covers.append({
+                'id': None,
                 'blob_data': blob_base64,
                 'mime_type': self.cover_image_mime or 'image/jpeg',
                 'label': 'Primary Cover',
-                'is_primary': True
+                'is_primary': True,
             })
-        
-        additional_covers = self.get_additional_covers()
-        covers.extend(additional_covers)
-        
+
+        covers.extend(self.get_additional_covers())
         return covers
-    
+
+    def list_cover_summaries(self):
+        """Lightweight cover metadata for templates (no Base64 payloads)."""
+        covers = []
+        if self.cover_image:
+            covers.append({
+                'id': None,
+                'is_primary': True,
+                'label': 'Primary Cover',
+                'mime_type': self.cover_image_mime or 'image/jpeg',
+            })
+        for cover in self.cover_variants:
+            covers.append({
+                'id': cover.id,
+                'is_primary': False,
+                'label': cover.label or 'Cover',
+                'mime_type': cover.mime_type or 'image/jpeg',
+            })
+        return covers
+
+    def set_primary_cover_variant(self, cover_id):
+        """Promote an alternate cover row to the primary cover image."""
+        variant = next((c for c in self.cover_variants if c.id == cover_id), None)
+        if variant is None:
+            return False
+
+        old_primary_data = self.cover_image
+        old_primary_mime = self.cover_image_mime or 'image/jpeg'
+        old_primary_label = 'Primary Cover'
+
+        new_primary_data = variant.image_data
+        new_primary_mime = variant.mime_type or 'image/jpeg'
+
+        remaining = [
+            {
+                'image_data': cover.image_data,
+                'mime_type': cover.mime_type or 'image/jpeg',
+                'label': cover.label or 'Cover',
+            }
+            for cover in self.cover_variants
+            if cover.id != cover_id
+        ]
+
+        self.cover_image = new_primary_data
+        self.cover_image_mime = new_primary_mime
+        self.cover_variants.clear()
+        if self.id is not None:
+            db.session.flush()
+
+        position = 1
+        if old_primary_data:
+            self.cover_variants.append(ComicCover(
+                image_data=old_primary_data,
+                mime_type=old_primary_mime,
+                label=old_primary_label,
+                position=position,
+            ))
+            position += 1
+
+        for cover in remaining:
+            self.cover_variants.append(ComicCover(
+                image_data=cover['image_data'],
+                mime_type=cover['mime_type'],
+                label=cover['label'],
+                position=position,
+            ))
+            position += 1
+
+        self.additional_covers = None
+        return True
+
     def has_cover_image(self):
         """Check if comic has a cover image."""
         return self.cover_image is not None
-    
+
     def __repr__(self):
         return f'<Comic {self.title} #{self.issue_number}>'
 
