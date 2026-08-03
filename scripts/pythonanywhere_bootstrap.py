@@ -26,13 +26,25 @@ def main() -> int:
 
     from dotenv import load_dotenv
 
-    load_dotenv(project_root / '.env')
+    env_path = project_root / '.env'
+    load_dotenv(env_path)
 
     parser = argparse.ArgumentParser(description='Bootstrap ComicbookMgr on PythonAnywhere')
     parser.add_argument('--username', default='admin')
     parser.add_argument('--email', required=True)
     parser.add_argument('--password', required=True)
     args = parser.parse_args()
+
+    if env_path.exists():
+        env_text = env_path.read_text(encoding='utf-8')
+        if 'YOUR_USERNAME' in env_text:
+            print(
+                'ERROR: .env still contains YOUR_USERNAME.\n'
+                'Either replace it with your PythonAnywhere username, or recreate .env:\n'
+                '  cp env.pythonanywhere.example .env\n'
+                '  nano .env   # set SECRET_KEY only; paths can stay relative'
+            )
+            return 1
 
     if os.environ.get('FLASK_ENV', '').lower() != 'production':
         print('Warning: FLASK_ENV is not production. Continuing anyway.')
