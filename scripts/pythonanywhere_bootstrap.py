@@ -36,15 +36,19 @@ def main() -> int:
     args = parser.parse_args()
 
     if env_path.exists():
-        env_text = env_path.read_text(encoding='utf-8')
-        if 'YOUR_USERNAME' in env_text:
-            print(
-                'ERROR: .env still contains YOUR_USERNAME.\n'
-                'Either replace it with your PythonAnywhere username, or recreate .env:\n'
-                '  cp env.pythonanywhere.example .env\n'
-                '  nano .env   # set SECRET_KEY only; paths can stay relative'
-            )
-            return 1
+        # Ignore comments; only flag real leftover path placeholders.
+        for line in env_path.read_text(encoding='utf-8').splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            if 'YOUR_USERNAME' in stripped:
+                print(
+                    'ERROR: .env still contains YOUR_USERNAME in a setting.\n'
+                    'Recreate it from the template:\n'
+                    '  cp env.pythonanywhere.example .env\n'
+                    '  nano .env   # set SECRET_KEY (and API keys); keep relative paths'
+                )
+                return 1
 
     if os.environ.get('FLASK_ENV', '').lower() != 'production':
         print('Warning: FLASK_ENV is not production. Continuing anyway.')
