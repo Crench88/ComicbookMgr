@@ -1,0 +1,23 @@
+# PythonAnywhere / Python 3.13-friendly install.
+# Omits rapidocr-onnxruntime (no 3.13 wheels yet). Barcode OCR fallback
+# is skipped; pyzbar/OpenCV barcode decode and the rest of the app still work.
+
+Flask==2.3.3
+Flask-Login==0.6.3
+Flask-Mail==0.9.1
+Flask-Migrate==4.0.5
+Flask-SQLAlchemy==3.0.5
+Flask-WTF==1.1.1
+WTForms==3.0.1
+Werkzeug==2.3.7
+Pillow==11.1.0
+python-dotenv==1.0.0
+email-validator==2.0.0
+gunicorn==21.2.0
+requests==2.31.0
+beautifulsoup4==4.12.3
+diskcache==5.6.3
+opencv-python-headless>=4.8.0
+pyzbar>=0.1.9
+numpy>=1.26.0
+rarfile>=4.2
