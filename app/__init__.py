@@ -89,6 +89,9 @@ def create_app(test_config=None):
             SESSION_COOKIE_HTTPONLY=True,
             SESSION_COOKIE_SAMESITE='Lax',
             SESSION_COOKIE_SECURE=(flask_env == 'production'),
+            # Hosted behind HTTPS terminators (PythonAnywhere); keep CSRF usable.
+            PREFERRED_URL_SCHEME='https' if flask_env == 'production' else 'http',
+            WTF_CSRF_TIME_LIMIT=int(os.environ.get('WTF_CSRF_TIME_LIMIT', 86400)),
             UPLOAD_FOLDER=os.path.join(app.instance_path, 'uploads'),
             COVERS_FOLDER=os.environ.get('COVERS_FOLDER', os.path.join(app.instance_path, 'covers')),
             COVERS_KEEP_BLOB=os.environ.get('COVERS_KEEP_BLOB', 'true').lower() in ['1', 'true', 'yes', 'on'],
