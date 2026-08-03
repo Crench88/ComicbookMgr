@@ -20,7 +20,11 @@ def _get_cache():
 
         cache_dir = os.environ.get('CACHE_DIR', os.path.join('instance', 'cache'))
         os.makedirs(cache_dir, exist_ok=True)
-        _cache = diskcache.Cache(cache_dir)
+        try:
+            size_limit = int(os.environ.get('CACHE_SIZE_LIMIT', 512 * 1024 * 1024))
+        except (TypeError, ValueError):
+            size_limit = 512 * 1024 * 1024
+        _cache = diskcache.Cache(cache_dir, size_limit=size_limit)
         return _cache
 
 

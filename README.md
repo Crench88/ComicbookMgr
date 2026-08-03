@@ -127,32 +127,133 @@ A comprehensive web application for managing personal comic book collections, bu
 
 ```
 ComicbookMgr/
-├── app.py                 # Main Flask application factory
-├── models.py              # Database models (User, Comic)
-├── forms.py               # WTForms for user input
-├── auth.py                # Authentication blueprint
-├── main.py                # Main routes blueprint
-├── dashboard.py           # Dashboard blueprint
-├── comics.py              # Comics management blueprint
 ├── app.py                 # Application entry point
-├── requirements.txt       # Python dependencies
-├── README.md             # This file
-├── templates/            # HTML templates
-│   ├── base.html         # Base template with navigation
-│   ├── main/             # Main page templates
-│   ├── auth/             # Authentication templates
-│   ├── dashboard/        # Dashboard templates
-│   └── comics/           # Comics management templates
-├── static/               # Static files
-│   ├── css/              # Custom CSS styles
-│   ├── js/               # JavaScript functionality
-│   └── uploads/          # Uploaded images (created automatically)
-├── tests/                # Unit tests
-│   └── test_app.py       # Test cases
-└── instance/             # Instance-specific files (created automatically)
-    ├── comicbook.db      # SQLite database
-    └── uploads/          # Uploaded files
+├── app/                   # Application package
+│   ├── __init__.py        # Flask app factory
+│   ├── models.py          # Database models
+│   ├── forms.py           # WTForms
+│   ├── auth.py / main.py / dashboard.py / admin.py
+│   ├── comics/            # Comics blueprint package
+│   ├── reader/            # CBZ digital reader blueprint
+│   ├── services/          # ComicVine, barcode, covers, archives, etc.
+│   │   └── pricing/       # eBay comparables, grade curve, statistics
+│   ├── templates/         # comics/, reader/, admin/, ...
+│   └── static/            # CSS / JS
+├── requirements.txt
+├── tests/
+└── instance/              # SQLite DB, covers/, digital/, cache
 ```
+
+
+### Creator credits from ComicVine
+ComicVine returns every role a person held on an issue as one comma-joined string
+(`"penciler, inker, cover"`), so credits are matched per role and a person is listed
+under each one they held. The stored credits are writer, artist, penciler, inker,
+colorist, letterer, cover artist, editor, assistant editor, designer, production,
+translator, and other.
+
+`Artist` holds only ComicVine's literal `artist` credit; pencilers and inkers have
+their own fields. Roles ComicVine leaves unlabelled (its own `other`) and any role
+not yet mapped land in **Other** rather than being discarded, so no credit is lost
+when ComicVine adds a role.
+
+### Value estimates from eBay Canada
+The value lookup button on the comic form prices an issue against **live eBay
+listings**, defaulting to eBay Canada (`EBAY_CA`) so amounts come back in CAD.
+
+```bash
+# https://developer.ebay.com/my/keys -> production App ID + Cert ID
+EBAY_CLIENT_ID=your-app-id
+EBAY_CLIENT_SECRET=your-cert-id
+EBAY_MARKETPLACE_ID=EBAY_CA      # EBAY_US, EBAY_GB, EBAY_AU also supported
+PRICE_ASK_TO_SOLD_RATIO=0.8
+```
+
+The keys use the client-credentials grant, so no eBay user login or consent
+screen is involved. Without keys the button still works and falls back to a
+labelled offline estimate.
+
+How a number is produced:
+
+1. Search active fixed-price listings for `series #issue`, restricted to items
+   that can be delivered to the marketplace's country.
+2. Throw out anything that is not a comparable copy: multi-issue lots, posters
+   and figures, facsimiles and reprints, signed or remarked copies, collected
+   editions, the wrong series, and the wrong issue number.
+3. Split graded slabs (CGC/CBCS) from raw copies. A slab price says nothing
+   about a raw copy, so slabs never feed a raw estimate — they are shown
+   separately for context.
+4. Read each listing's grade from its title (`CGC 9.8`, `VF/NM`, `Near Mint`)
+   and restate its price at *your* comic's condition using a grade curve.
+   Listings that state no grade are assumed Very Fine (8.0).
+5. Prefer copies graded within two points of your condition, because restating a
+   beaten-up copy five grades higher produces nonsense. Copies further away are
+   used only when too few close ones exist, and then confidence drops a level.
+6. Discard outliers beyond the interquartile fences, then take the median.
+7. Multiply by `PRICE_ASK_TO_SOLD_RATIO` (default 0.8), because asking prices
+   sit above real sale prices.
+
+The result is a range rather than a single number, and it always reports its
+sample size, its confidence, and the exact listings behind it so you can judge
+whether to trust it. Searches and access tokens are cached (six hours and token
+lifetime respectively) to stay well inside eBay's free call limits.
+
+Caveat worth knowing: the Browse API only exposes **active** listings, not
+completed sales. Asking prices are the best free proxy, which is why the
+estimate is discounted and labelled as such.
+
+### Cover barcode scanning (optional)
+Cover UPC/EAN scanning uses OpenCV and pyzbar, with an OCR fallback for soft
+ComicVine art where the bars themselves will not decode:
+
+```bash
+pip install opencv-python-headless pyzbar rapidocr-onnxruntime
+```
+
+On Windows, pyzbar also needs the ZBar shared library. If scans fail with a DLL error:
+1. Install ZBar for Windows, or copy libzbar-64.dll into a directory on your PATH
+2. Restart the app
+
+The scanner tries rotations (comic UPCs are often printed vertically), crops the
+trade-dress strip, and if the bars still fail it reads the printed digits and
+rebuilds a valid UPC-A code. The **Scan from Cover** button appears on comic
+detail/edit pages when a cover image exists.
+
+### Cover image storage
+New and updated covers are written under `instance/covers/{user_id}/{comic_id}/` and served from disk. Legacy SQLite BLOBs still work (dual-read). After upgrading, extract existing BLOBs once:
+
+```bash
+python scripts/migrate_covers_to_filesystem.py
+# Optional: also clear BLOBs after a successful extract
+python scripts/migrate_covers_to_filesystem.py --clear-blobs
+```
+
+`COVERS_FOLDER` and `COVERS_KEEP_BLOB` can override the defaults via environment variables.
+
+### Digital comic reader (CBZ / CBR)
+Attach a `.cbz` or `.cbr` on a comic’s detail page, then open **Read**.
+
+- Archives are stored under `instance/digital/{user_id}/{comic_id}/`
+- Pages are extracted on demand, then cached; reading keys are ← → / A D, `S` toggles two-page spread, `Esc` exits
+- Last page is remembered per user (`ReadingProgress`) and unfinished comics appear under **Continue Reading** on the dashboard
+- Override storage with `DIGITAL_FOLDER`; upload size still respects `MAX_CONTENT_LENGTH` (default 64 MB)
+
+#### CBR support
+CBR needs `rarfile` plus an external extraction tool, because RAR decompression is not in the standard library:
+
+```bash
+pip install rarfile
+```
+
+Then install `unrar` (or `bsdtar` / `7z`) and make sure it is on `PATH`. On Windows the bundled `tar.exe` does **not** count — rarfile looks for a binary literally named `unrar`, `bsdtar`, or `7z`. When no tool is found, CBZ keeps working and the comic page explains what is missing instead of failing at upload time.
+
+#### Reader page cache
+Extracted pages go into a size-capped LRU cache (`diskcache`) so repeat views skip decompression entirely:
+
+- `READER_CACHE_DIR` — defaults to `instance/reader_cache/`
+- `READER_CACHE_SIZE_LIMIT` — bytes, defaults to 512 MB; least-recently-used pages are evicted first
+
+The cache is keyed by archive content hash, so replacing or removing a file drops its pages automatically. Responses carry an `ETag` for browser-side 304s and an `X-Page-Cache: hit|miss` header that is handy when debugging.
 
 ## Testing
 

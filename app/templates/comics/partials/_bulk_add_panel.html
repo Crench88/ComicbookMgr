@@ -1,0 +1,118 @@
+                    <div class="tab-pane fade" id="bulkAddPanel" role="tabpanel" aria-labelledby="bulk-tab">
+                        <div class="card border-success mb-0">
+                            <div class="card-header bg-success text-white">
+                                <h5 class="mb-0"><i class="bi bi-collection"></i> Bulk Add by Issue Range</h5>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted">
+                                    Add many issues from one series at once. ComicVine is queried for each issue;
+                                    metadata and primary cover images are saved automatically.
+                                    Use <strong>Choose Series Volume</strong> above to pick the right run by year first.
+                                </p>
+
+                                <div class="row g-3">
+                                    <div class="col-md-8">
+                                        <label for="bulkSeries" class="form-label">Series Name</label>
+                                        <input type="text" class="form-control" id="bulkSeries"
+                                               placeholder="e.g., ROM" list="seriesOptions">
+                                        <div class="form-text">Must match the ComicVine series name.</div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="bulkStartYear" class="form-label">Start Year (optional)</label>
+                                        <input type="number" class="form-control" id="bulkStartYear"
+                                               placeholder="e.g., 1979" min="1900" max="2099">
+                                        <div class="form-text">Helps pick the right volume.</div>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-8">
+                                        <label for="bulkIssueRanges" class="form-label">Issue Ranges</label>
+                                        <input type="text" class="form-control" id="bulkIssueRanges"
+                                               placeholder="e.g., 1-32  or  1-14, 16-22, 24-32">
+                                        <div class="form-text">
+                                            Use commas for gaps. Examples: <code>1-32</code>,
+                                            <code>1-14, 16-22, 24-32</code>, or <code>1, 3, 5-8</code>.
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="bulkCondition" class="form-label">Default Condition</label>
+                                        <select class="form-select" id="bulkCondition">
+                                            <option value="">None</option>
+                                            <option value="Mint">Mint</option>
+                                            <option value="Near Mint">Near Mint</option>
+                                            <option value="Very Fine">Very Fine</option>
+                                            <option value="Fine">Fine</option>
+                                            <option value="Very Good">Very Good</option>
+                                            <option value="Good">Good</option>
+                                            <option value="Fair">Fair</option>
+                                            <option value="Poor">Poor</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-4">
+                                        <label for="bulkVolumeHint" class="form-label">Volume (optional)</label>
+                                        <input type="text" class="form-control" id="bulkVolumeHint"
+                                               placeholder="e.g., 1">
+                                    </div>
+                                    <div class="col-md-8 d-flex align-items-end">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="bulkSkipExisting" checked>
+                                            <label class="form-check-label" for="bulkSkipExisting">
+                                                Skip issues already in my collection
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-12">
+                                        <label class="form-label d-block">Ownership</label>
+                                        {% from "comics/partials/_ownership_sliders.html" import ownership_sliders %}
+                                        {{ ownership_sliders(
+                                            in_collection_id='bulkInCollection',
+                                            digital_id='bulkIsDigital',
+                                            in_collection_checked=True,
+                                            digital_checked=False,
+                                            compact=True
+                                        ) }}
+                                    </div>
+                                </div>
+
+                                <div id="bulkPreview" class="alert alert-info mt-3 d-none"></div>
+                                <div id="bulkError" class="alert alert-danger mt-3 d-none"></div>
+
+                                <div id="bulkProgress" class="d-none mt-3">
+                                    <div class="d-flex justify-content-between mb-1">
+                                        <span id="bulkProgressLabel">Adding comics...</span>
+                                        <span id="bulkProgressCount">0 / 0</span>
+                                    </div>
+                                    <div class="progress" role="progressbar" aria-label="Bulk add progress">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                             id="bulkProgressBar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+
+                                <div id="bulkResults" class="d-none mt-3">
+                                    <h6>Results</h6>
+                                    <ul class="list-group list-group-flush small" id="bulkResultsList"></ul>
+                                </div>
+
+                                <div class="d-flex justify-content-between mt-4">
+                                    <a href="{{ url_for('comics.index') }}" class="btn btn-secondary">
+                                        <i class="bi bi-arrow-left"></i> Cancel
+                                    </a>
+                                    <div>
+                                        <button type="button" class="btn btn-outline-success me-2" id="bulkPreviewBtn">
+                                            <i class="bi bi-eye"></i> Preview
+                                        </button>
+                                        <button type="button" class="btn btn-success" id="bulkAddBtn">
+                                            <i class="bi bi-cloud-download"></i> Add All
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div><!-- /bulkAddPanel -->

@@ -6,6 +6,11 @@
     var THEME_KEY = 'themePreference';
     var VALID_THEMES = ['light', 'dark', 'system'];
 
+    function getCsrfToken() {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? meta.content : '';
+    }
+
     function getStoredTheme() {
         try {
             var stored = localStorage.getItem(THEME_KEY);
@@ -43,7 +48,8 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': getCsrfToken()
                 },
                 body: JSON.stringify({ theme: preference })
             }).catch(function(err) {
@@ -249,9 +255,10 @@
         window.addEventListener('resize', syncCollectionLayout);
 
         function escapeHtml(value) {
-            return String(value)
+            return String(value || '')
                 .replace(/&/g, '&amp;')
                 .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
         }
@@ -303,6 +310,7 @@
             var condition = card.dataset.condition || '';
             var value = card.dataset.value || '';
             var wishlist = card.dataset.wishlist === 'true';
+            var ownership = card.dataset.ownership || '';
             var coverUrl = card.dataset.coverUrl || '';
 
             preview.querySelector('.cover-preview-issue').textContent = issue ? ('#' + issue) : 'Issue unknown';
@@ -310,7 +318,11 @@
             var metaParts = [publisher];
             if (condition) metaParts.push(condition);
             if (value) metaParts.push(value);
-            if (wishlist) metaParts.push('Wishlist');
+            if (ownership) {
+                metaParts.push(ownership);
+            } else if (wishlist) {
+                metaParts.push('Wishlist');
+            }
             preview.querySelector('.cover-preview-meta').textContent = metaParts.filter(Boolean).join(' · ');
 
             var img = preview.querySelector('.cover-preview-image img');
@@ -364,6 +376,11 @@
                 }
                 var showUrl = withCollectionReturnUrl(comic.show_url);
                 var editUrl = withCollectionReturnUrl(comic.edit_url);
+                var safeShowUrl = escapeHtml(showUrl);
+                var safeEditUrl = escapeHtml(editUrl);
+                var safeCoverUrl = escapeHtml(comic.cover_url);
+                var safeIssue = escapeHtml(comic.issue_number || '?');
+                var safeTitle = escapeHtml(comic.title || '');
                 var article = document.createElement('article');
                 article.className = 'cover-card';
                 article.dataset.comicId = comic.id;
@@ -373,29 +390,36 @@
                 article.dataset.condition = comic.condition || '';
                 article.dataset.value = comic.estimated_value || '';
                 article.dataset.wishlist = comic.is_wishlist ? 'true' : 'false';
+                article.dataset.ownership = (comic.ownership_tags || [])
+                    .map(function (tag) { return tag.label; })
+                    .join(', ');
                 article.dataset.coverUrl = comic.has_cover ? comic.cover_url : '';
 
                 var badges = '';
-                if (comic.is_wishlist) badges += '<span class="cover-card-badge wishlist">Wishlist</span>';
+                (comic.ownership_tags || []).forEach(function (tag) {
+                    if (tag.key === 'collection') return;
+                    var extra = tag.key === 'wishlist' ? ' wishlist' : '';
+                    badges += '<span class="cover-card-badge' + extra + '">' + escapeHtml(tag.label) + '</span>';
+                });
                 if (comic.duplicate_total > 1) {
                     badges += '<span class="cover-card-badge duplicate">Copy ' + comic.duplicate_index + '/' + comic.duplicate_total + '</span>';
                 }
 
                 var imageHtml = comic.has_cover
-                    ? '<img src="' + comic.cover_url + '" alt="#' + (comic.issue_number || '') + '" loading="lazy">'
+                    ? '<img src="' + safeCoverUrl + '" alt="#' + safeIssue + '" loading="lazy">'
                     : '<div class="cover-card-placeholder"><i class="bi bi-image"></i></div>';
 
                 article.innerHTML =
-                    '<a href="' + showUrl + '" class="cover-card-link">' +
+                    '<a href="' + safeShowUrl + '" class="cover-card-link">' +
                         '<div class="cover-card-image">' + imageHtml + badges + '</div>' +
                         '<div class="cover-card-caption">' +
-                            '<span class="cover-card-issue">#' + (comic.issue_number || '?') + '</span>' +
-                            (comic.title ? '<span class="cover-card-title">' + comic.title + '</span>' : '') +
+                            '<span class="cover-card-issue">#' + safeIssue + '</span>' +
+                            (comic.title ? '<span class="cover-card-title">' + safeTitle + '</span>' : '') +
                         '</div>' +
                     '</a>' +
                     '<div class="cover-card-actions">' +
-                        '<a href="' + showUrl + '" class="btn btn-sm btn-outline-primary" title="View"><i class="bi bi-eye"></i></a>' +
-                        '<a href="' + editUrl + '" class="btn btn-sm btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>' +
+                        '<a href="' + safeShowUrl + '" class="btn btn-sm btn-outline-primary" title="View"><i class="bi bi-eye"></i></a>' +
+                        '<a href="' + safeEditUrl + '" class="btn btn-sm btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>' +
                         '<button type="button" class="btn btn-sm btn-outline-danger delete-comic-btn" ' +
                             'data-comic-id="' + comic.id + '" ' +
                             'data-comic-title="' + escapeHtml(comic.title || '') + '" ' +

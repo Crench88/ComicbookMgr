@@ -20,10 +20,12 @@ MAX_SEARCH_RESULTS = 10
 _ISSUE_PREFIX = '4000-'
 _VOLUME_PREFIX = '4050-'
 
+# ComicVine issues expose no barcode/UPC field, and it silently drops
+# unknown names here rather than erroring, so never add 'upc' back to this list.
 _ISSUE_FIELDS = (
     'id,name,issue_number,publisher,character_credits,person_credits,'
     'team_credits,story_arc_credits,deck,description,'
-    'store_date,cover_date,image,volume,upc,site_detail_url'
+    'store_date,cover_date,image,volume,site_detail_url'
 )
 _VOLUME_FIELDS = 'id,name,aliases,publisher,start_year,count_of_issues'
 
@@ -246,64 +248,94 @@ def _join_credit_names(credits: list, key: str = 'name') -> str:
     return ', '.join(names)
 
 
+# ComicVine puts every role a person had on an issue into one comma-joined
+# string, e.g. "penciler, inker, cover", so roles are matched per token.
 _PERSON_ROLE_BUCKETS = {
     'writer': 'writers',
     'co-writer': 'writers',
     'script': 'writers',
+    'scripter': 'writers',
     'plot': 'writers',
+    'plotter': 'writers',
     'artist': 'artists',
-    'penciler': 'artists',
-    'penciller': 'artists',
+    'painter': 'artists',
+    'penciler': 'pencilers',
+    'penciller': 'pencilers',
+    'breakdowns': 'pencilers',
     'inker': 'inkers',
+    'finishes': 'inkers',
     'colorist': 'colorists',
+    'colourist': 'colorists',
+    'colors': 'colorists',
     'letterer': 'letterers',
-    'editor': 'editors',
+    'letters': 'letterers',
     'cover': 'cover_artists',
     'cover artist': 'cover_artists',
     'cover inks': 'cover_artists',
     'cover colors': 'cover_artists',
+    'cover pencils': 'cover_artists',
+    'editor': 'editors',
+    'editor in chief': 'editors',
+    'executive editor': 'editors',
+    'senior editor': 'editors',
+    'group editor': 'editors',
+    'consulting editor': 'editors',
+    'assistant': 'assistant_editors',
+    'assistant editor': 'assistant_editors',
+    'associate editor': 'assistant_editors',
+    'designer': 'designers',
+    'design': 'designers',
+    'production': 'production',
+    'production artist': 'production',
+    'translator': 'translators',
+    'translation': 'translators',
 }
+
+# Bucket -> the Comic column that stores it.
+_CREDIT_BUCKET_FIELDS = (
+    ('writers', 'writer'),
+    ('artists', 'artist'),
+    ('pencilers', 'penciler'),
+    ('inkers', 'inker'),
+    ('colorists', 'colorist'),
+    ('letterers', 'letterer'),
+    ('cover_artists', 'cover_artist'),
+    ('editors', 'editor'),
+    ('assistant_editors', 'assistant_editor'),
+    ('designers', 'designer'),
+    ('production', 'production'),
+    ('translators', 'translator'),
+    ('other_credits', 'other_credits'),
+)
+
+CREDIT_FIELD_NAMES = tuple(field for _, field in _CREDIT_BUCKET_FIELDS)
 
 
 def _extract_person_credits(result: dict) -> dict:
-    """Group ComicVine person_credits by creative role."""
-    buckets = {key: [] for key in {
-        'writers', 'artists', 'inkers', 'colorists', 'letterers', 'editors', 'cover_artists',
-    }}
+    """Group ComicVine person_credits by creative role.
+
+    One person can hold several roles on an issue and will appear under each.
+    Roles ComicVine does not label (its own "other", plus anything new) land in
+    other_credits rather than being dropped.
+    """
+    buckets = {bucket: [] for bucket, _ in _CREDIT_BUCKET_FIELDS}
 
     for person in result.get('person_credits') or []:
         name = (person.get('name') or '').strip()
         if not name:
             continue
-        role = (person.get('role') or '').strip().lower()
-        bucket = _PERSON_ROLE_BUCKETS.get(role)
-        if bucket and name not in buckets[bucket]:
-            buckets[bucket].append(name)
+        roles = (person.get('role') or '').strip().lower()
+        tokens = [token.strip() for token in roles.split(',') if token.strip()]
+        for token in tokens or ['other']:
+            bucket = _PERSON_ROLE_BUCKETS.get(token, 'other_credits')
+            if name not in buckets[bucket]:
+                buckets[bucket].append(name)
 
-    visual_artists = []
-    for key in ('artists', 'inkers'):
-        for name in buckets[key]:
-            if name not in visual_artists:
-                visual_artists.append(name)
-
-    def _join(bucket_key: str) -> str:
-        return ', '.join(buckets[bucket_key])
-
-    return {
-        'writers': buckets['writers'],
-        'artists': visual_artists,
-        'inkers': buckets['inkers'],
-        'colorists': buckets['colorists'],
-        'letterers': buckets['letterers'],
-        'editors': buckets['editors'],
-        'cover_artists': buckets['cover_artists'],
-        'writer': _join('writers'),
-        'artist': ', '.join(visual_artists),
-        'colorist': _join('colorists'),
-        'letterer': _join('letterers'),
-        'editor': _join('editors'),
-        'cover_artist': _join('cover_artists'),
-    }
+    credits = {field: ', '.join(buckets[bucket]) for bucket, field in _CREDIT_BUCKET_FIELDS}
+    # List forms the search UI falls back to when filling the form.
+    credits['writers'] = list(buckets['writers'])
+    credits['artists'] = list(buckets['artists'])
+    return credits
 
 
 def _extract_issue_description(result: dict) -> str:
@@ -371,12 +403,7 @@ def _format_issue_lightweight(result: dict, series_hint: str = '') -> dict | Non
         'release_date': result.get('store_date') or result.get('cover_date') or '',
         'cover_date': result.get('cover_date') or '',
         'description': _extract_issue_description(result),
-        'writer': people['writer'],
-        'artist': people['artist'],
-        'colorist': people['colorist'],
-        'letterer': people['letterer'],
-        'editor': people['editor'],
-        'cover_artist': people['cover_artist'],
+        **{field: people[field] for _, field in _CREDIT_BUCKET_FIELDS},
         'teams': teams,
         'story_arc': story_arc,
         'writers': people['writers'],
@@ -386,8 +413,7 @@ def _format_issue_lightweight(result: dict, series_hint: str = '') -> dict | Non
         'volume': volume_name,
         'volume_start_year': volume_start_year,
         '_volume_id': volume_id,
-        'upc': result.get('upc') or '',
-        'isbn': '',
+        'upc': '',
         'comicvine_url': (result.get('site_detail_url') or '').strip(),
         'source': 'ComicVine',
         'has_variants_endpoint': True,
@@ -715,27 +741,6 @@ def _freetext_issue_search(query: str, api_key: str, limit: int = 20) -> list:
     except requests.RequestException:
         return []
     return data.get('results') or []
-
-
-def search_comicvine_by_upc(upc: str, api_key: str) -> list:
-    if not api_key or not upc:
-        return []
-    try:
-        data = _cv_get(
-            'issues/',
-            {'filter': f'upc:{upc}', 'field_list': _ISSUE_FIELDS, 'limit': 5},
-            api_key,
-        )
-    except requests.RequestException:
-        return []
-    results = []
-    for raw in data.get('results') or []:
-        formatted = _format_issue_lightweight(raw)
-        if formatted:
-            results.append(formatted)
-    if results:
-        _enrich_with_volume_meta(results, api_key)
-    return results
 
 
 def search_comicvine_api(query: str, api_key: str,

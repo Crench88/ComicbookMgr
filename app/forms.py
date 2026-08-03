@@ -81,10 +81,17 @@ class ComicForm(FlaskForm):
     characters = TextAreaField('Characters (comma-separated)', validators=[Optional(), Length(max=2000)])
     writer = TextAreaField('Writer(s)', validators=[Optional(), Length(max=1000)])
     artist = TextAreaField('Artist(s)', validators=[Optional(), Length(max=1000)])
+    penciler = StringField('Penciler(s)', validators=[Optional(), Length(max=500)])
+    inker = StringField('Inker(s)', validators=[Optional(), Length(max=500)])
     colorist = StringField('Colorist(s)', validators=[Optional(), Length(max=500)])
     letterer = StringField('Letterer(s)', validators=[Optional(), Length(max=500)])
     editor = StringField('Editor(s)', validators=[Optional(), Length(max=500)])
+    assistant_editor = StringField('Assistant Editor(s)', validators=[Optional(), Length(max=500)])
     cover_artist = StringField('Cover Artist(s)', validators=[Optional(), Length(max=500)])
+    designer = StringField('Designer(s)', validators=[Optional(), Length(max=500)])
+    production = StringField('Production', validators=[Optional(), Length(max=500)])
+    translator = StringField('Translator(s)', validators=[Optional(), Length(max=500)])
+    other_credits = StringField('Other Credits', validators=[Optional(), Length(max=500)])
     teams = TextAreaField('Teams', validators=[Optional(), Length(max=1000)])
     story_arc = StringField('Story Arc', validators=[Optional(), Length(max=500)])
     description = TextAreaField('Description / Synopsis', validators=[Optional(), Length(max=5000)])
@@ -93,8 +100,6 @@ class ComicForm(FlaskForm):
     release_date = DateField('Release Date', validators=[Optional()], format='%Y-%m-%d')
     upc = StringField('UPC Code', validators=[Optional(), Length(max=20)], 
                      description='12-digit Universal Product Code (e.g., 123456789012)')
-    isbn = StringField('ISBN Code', validators=[Optional(), Length(max=20)], 
-                      description='13-digit International Standard Book Number (e.g., 978-0-7475-3269-9)')
     condition = SelectField('Condition', choices=[
         ('', 'Select Condition'),
         ('Mint', 'Mint'),
@@ -112,7 +117,24 @@ class ComicForm(FlaskForm):
         Optional(),
         FileAllowed(['jpg', 'jpeg', 'png', 'gif'], 'Images only!')
     ])
+    tags = StringField(
+        'Tags',
+        validators=[Optional(), Length(max=500)],
+        description='Comma-separated labels (e.g., bronze-age, key-issue, signed)',
+    )
+    read_status = SelectField(
+        'Read Status',
+        choices=[
+            ('unread', 'Unread'),
+            ('reading', 'Reading'),
+            ('read', 'Read'),
+        ],
+        default='unread',
+        validators=[Optional()],
+    )
     is_wishlist = BooleanField('Add to Wishlist')
+    in_collection = BooleanField('In Collection', default=True)
+    is_digital = BooleanField('Digital', default=False)
     submit = SubmitField('Save Comic')
 
 

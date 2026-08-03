@@ -18,14 +18,20 @@ def search_local_series_volumes(series_name: str, publisher: str = '') -> list:
     if not series_name:
         return []
 
-    query = Series.query
+    query = db.session.query(
+        Series,
+        db.func.count(SeriesIssue.id).label('issue_count'),
+    ).outerjoin(SeriesIssue, SeriesIssue.series_id == Series.id)
     query = query.filter(Series.name.ilike(f'%{series_name}%'))
     if publisher:
         query = query.filter(Series.publisher.ilike(f'%{publisher.strip()}%'))
 
-    rows = query.order_by(Series.name.asc(), Series.volume.asc()).limit(50).all()
+    rows = query.group_by(Series.id).order_by(
+        Series.name.asc(),
+        Series.volume.asc(),
+    ).limit(50).all()
     results = []
-    for series in rows:
+    for series, issue_count in rows:
         start_year = _parse_start_year(series.date_range or '')
         date_range_label = series.date_range or ''
         if not date_range_label and start_year:
@@ -38,7 +44,7 @@ def search_local_series_volumes(series_name: str, publisher: str = '') -> list:
             'display_name': series.display_name,
             'publisher': series.publisher or '',
             'start_year': start_year,
-            'count_of_issues': len(series.issues),
+            'count_of_issues': issue_count,
             'volume_number': series.volume or '',
             'date_range_label': date_range_label,
         })
@@ -132,7 +138,6 @@ def search_local_database(query, series_name=None, issue_number=None, local_seri
                 'volume': series.display_name,
                 'volume_start_year': '',
                 'upc': '',
-                'isbn': '',
                 'series_id': series.id,
                 'source': 'Series Catalog',
                 'has_variants_endpoint': bool(issue.comicvine_issue_id),

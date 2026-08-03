@@ -1,0 +1,1664 @@
+<!-- Comic Search JavaScript -->
+<script src="{{ url_for('static', filename='js/comic-enrich.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, initializing search...');
+    
+    const searchBtn = document.getElementById('searchBtn');
+    const searchQuery = document.getElementById('searchQuery');
+    const searchResults = document.getElementById('searchResults');
+    const resultsList = document.getElementById('resultsList');
+    const searchLoading = document.getElementById('searchLoading');
+    const searchError = document.getElementById('searchError');
+    const searchLocalToggle = document.getElementById('searchLocal');
+    const localFilters = document.getElementById('localFilters');
+    const localSeriesInput = document.getElementById('localSeriesInput');
+    const localIssueInput = document.getElementById('localIssueInput');
+    const fetchCoverBtn = document.getElementById('fetchCoverBtn');
+    const coverSearchStatus = document.getElementById('coverSearchStatus');
+    
+    console.log('Search elements found:', {
+        searchBtn: !!searchBtn,
+        searchQuery: !!searchQuery,
+        searchResults: !!searchResults,
+        resultsList: !!resultsList,
+        searchLoading: !!searchLoading,
+        searchError: !!searchError
+    });
+    
+    // Form fields
+    const titleField = document.getElementById('comicTitle');  // Individual issue title
+    const seriesField = document.getElementById('comicSeries');  // Series name
+    const issueField = document.getElementById('comicIssueNumber');
+    const publisherField = document.getElementById('comicPublisher');
+    const genreField = document.getElementById('comicGenre');
+    const charactersField = document.getElementById('comicCharacters');
+    const writerField = document.getElementById('comicWriter');
+    const artistField = document.getElementById('comicArtist');
+    // Every credit ComicVine can return, keyed by the field it fills.
+    const creditFieldIds = {
+        penciler: 'comicPenciler',
+        inker: 'comicInker',
+        colorist: 'comicColorist',
+        letterer: 'comicLetterer',
+        cover_artist: 'comicCoverArtist',
+        editor: 'comicEditor',
+        assistant_editor: 'comicAssistantEditor',
+        designer: 'comicDesigner',
+        production: 'comicProduction',
+        translator: 'comicTranslator',
+        other_credits: 'comicOtherCredits',
+    };
+    const storyArcField = document.getElementById('comicStoryArc');
+    const teamsField = document.getElementById('comicTeams');
+    const descriptionField = document.getElementById('comicDescription');
+    const comicvineIssueIdField = document.getElementById('comicvineIssueId');
+    const comicvineUrlField = document.getElementById('comicvineUrl');
+    const upcField = document.getElementById('comicUPC');
+    const releaseDateField = document.getElementById('comicReleaseDate');
+
+    const browseVolumesBtn = document.getElementById('browseVolumesBtn');
+    const volumeSeriesQuery = document.getElementById('volumeSeriesQuery');
+    const volumeYearFilter = document.getElementById('volumeYearFilter');
+    const volumePublisherFilter = document.getElementById('volumePublisherFilter');
+    const naPublishersOnly = document.getElementById('naPublishersOnly');
+    const volumeListPanel = document.getElementById('volumeListPanel');
+    const volumeList = document.getElementById('volumeList');
+    const volumeListMeta = document.getElementById('volumeListMeta');
+    const volumeBrowseError = document.getElementById('volumeBrowseError');
+    const volumeBrowseLoading = document.getElementById('volumeBrowseLoading');
+    const selectedVolumeChip = document.getElementById('selectedVolumeChip');
+    const clearVolumeBtn = document.getElementById('clearVolumeBtn');
+    const searchComicVineToggle = document.getElementById('searchComicVine');
+
+    let selectedVolume = null;
+
+    function escapeVolumeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function showVolumeBrowseError(message) {
+        if (!volumeBrowseError) return;
+        volumeBrowseError.textContent = message;
+        volumeBrowseError.classList.remove('d-none');
+    }
+
+    function clearVolumeBrowseError() {
+        if (volumeBrowseError) {
+            volumeBrowseError.classList.add('d-none');
+            volumeBrowseError.textContent = '';
+        }
+    }
+
+    function renderSelectedVolumeChip() {
+        if (!selectedVolumeChip || !clearVolumeBtn) return;
+        if (!selectedVolume) {
+            selectedVolumeChip.classList.add('d-none');
+            clearVolumeBtn.classList.add('d-none');
+            return;
+        }
+        const vol = selectedVolume;
+        const bits = [
+            `<strong>${escapeVolumeHtml(vol.display_name || vol.name)}</strong>`,
+            vol.publisher ? escapeVolumeHtml(vol.publisher) : '',
+            vol.start_year ? `Started ${escapeVolumeHtml(vol.start_year)}` : '',
+            vol.date_range_label ? escapeVolumeHtml(vol.date_range_label) : '',
+            vol.source ? `<span class="badge bg-secondary">${escapeVolumeHtml(vol.source)}</span>` : '',
+        ].filter(Boolean);
+        selectedVolumeChip.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div><i class="bi bi-check-circle"></i> Selected volume: ${bits.join(' · ')}</div>
+            </div>
+            <div class="small text-muted mt-1">Issue searches and bulk add are limited to this volume.</div>
+        `;
+        selectedVolumeChip.classList.remove('d-none');
+        clearVolumeBtn.classList.remove('d-none');
+    }
+
+    function selectVolume(volume) {
+        selectedVolume = volume;
+        const seriesName = volume.display_name || volume.name || '';
+        if (localSeriesInput) localSeriesInput.value = seriesName;
+        if (seriesField) seriesField.value = volume.name || seriesName;
+        if (publisherField && volume.publisher) publisherField.value = volume.publisher;
+        const catalogSeriesId = document.getElementById('catalogSeriesId');
+        const comicvineVolumeId = document.getElementById('comicvineVolumeId');
+        if (catalogSeriesId) {
+            catalogSeriesId.value = volume.local_series_id ? String(volume.local_series_id) : '';
+        }
+        if (comicvineVolumeId) {
+            comicvineVolumeId.value = volume.comicvine_volume_id ? String(volume.comicvine_volume_id) : '';
+        }
+        const bulkSeries = document.getElementById('bulkSeries');
+        const bulkStartYear = document.getElementById('bulkStartYear');
+        const bulkVolumeHint = document.getElementById('bulkVolumeHint');
+        if (bulkSeries) bulkSeries.value = volume.name || seriesName;
+        if (bulkStartYear && volume.start_year) bulkStartYear.value = volume.start_year;
+        if (bulkVolumeHint && volume.volume_number) bulkVolumeHint.value = volume.volume_number;
+        if (volumeList) {
+            volumeList.querySelectorAll('.volume-list-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.volumeKey === volumePickerKey(volume));
+            });
+        }
+        renderSelectedVolumeChip();
+    }
+
+    function clearSelectedVolume() {
+        selectedVolume = null;
+        const catalogSeriesId = document.getElementById('catalogSeriesId');
+        const comicvineVolumeId = document.getElementById('comicvineVolumeId');
+        if (catalogSeriesId) catalogSeriesId.value = '';
+        if (comicvineVolumeId) comicvineVolumeId.value = '';
+        if (volumeList) {
+            volumeList.querySelectorAll('.volume-list-item').forEach(item => item.classList.remove('active'));
+        }
+        renderSelectedVolumeChip();
+    }
+
+    function volumePickerKey(volume) {
+        if (volume.local_series_id) return `local:${volume.local_series_id}`;
+        return `cv:${volume.comicvine_volume_id}`;
+    }
+
+    function renderVolumeList(volumes) {
+        if (!volumeList || !volumeListPanel || !volumeListMeta) return;
+        volumeList.innerHTML = '';
+        volumeListMeta.textContent = `${volumes.length} volume${volumes.length === 1 ? '' : 's'} found — sorted by start year`;
+        volumes.forEach(volume => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action volume-list-item';
+            item.dataset.volumeKey = volumePickerKey(volume);
+            const yearLabel = volume.start_year || 'Year unknown';
+            const issueLabel = volume.count_of_issues
+                ? `${volume.count_of_issues} issues`
+                : (volume.date_range_label || '');
+            const volNum = volume.volume_number ? `Vol. ${volume.volume_number}` : '';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                        <div class="fw-semibold">${escapeVolumeHtml(volume.display_name || volume.name)}</div>
+                        <div class="small text-muted">
+                            ${escapeVolumeHtml(volume.publisher || 'Unknown publisher')}
+                            ${volNum ? ` · ${escapeVolumeHtml(volNum)}` : ''}
+                        </div>
+                        <div class="small">
+                            <span class="badge bg-warning text-dark">${escapeVolumeHtml(yearLabel)}</span>
+                            ${issueLabel ? `<span class="ms-1">${escapeVolumeHtml(issueLabel)}</span>` : ''}
+                            <span class="badge bg-secondary ms-1">${escapeVolumeHtml(volume.source || '')}</span>
+                        </div>
+                    </div>
+                    <span class="btn btn-sm btn-outline-primary">Select</span>
+                </div>
+            `;
+            item.addEventListener('click', () => selectVolume(volume));
+            volumeList.appendChild(item);
+        });
+        volumeListPanel.classList.remove('d-none');
+    }
+
+    function appendNaPublisherParam(params) {
+        if (naPublishersOnly && !naPublishersOnly.checked) {
+            params.set('na_publishers_only', '0');
+        }
+    }
+
+    function browseVolumes() {
+        if (!volumeSeriesQuery) return;
+        const series = volumeSeriesQuery.value.trim()
+            || (searchQuery ? searchQuery.value.trim().replace(/#?\s*\d+.*$/, '').trim() : '')
+            || (localSeriesInput ? localSeriesInput.value.trim() : '');
+        if (!series) {
+            showVolumeBrowseError('Enter a series name to browse volumes.');
+            return;
+        }
+
+        clearVolumeBrowseError();
+        if (volumeBrowseLoading) volumeBrowseLoading.classList.remove('d-none');
+        if (volumeListPanel) volumeListPanel.classList.add('d-none');
+        if (browseVolumesBtn) browseVolumesBtn.disabled = true;
+
+        const params = new URLSearchParams({ series });
+        if (volumeYearFilter && volumeYearFilter.value.trim()) {
+            params.set('year', volumeYearFilter.value.trim());
+        }
+        const publisher = (volumePublisherFilter && volumePublisherFilter.value.trim())
+            || (publisherField && publisherField.value.trim());
+        if (publisher) params.set('publisher', publisher);
+        if (searchComicVineToggle) params.set('comicvine', searchComicVineToggle.checked ? '1' : '0');
+        if (searchLocalToggle) params.set('local', searchLocalToggle.checked ? '1' : '0');
+        appendNaPublisherParam(params);
+
+        fetch(`/comics/volumes/lookup?${params.toString()}`)
+            .then(resp => resp.json().then(data => ({ ok: resp.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok) {
+                    showVolumeBrowseError(data.error || 'Could not load volumes.');
+                    return;
+                }
+                renderVolumeList(data.volumes || []);
+            })
+            .catch(err => showVolumeBrowseError(`Volume browse failed: ${err.message}`))
+            .finally(() => {
+                if (volumeBrowseLoading) volumeBrowseLoading.classList.add('d-none');
+                if (browseVolumesBtn) browseVolumesBtn.disabled = false;
+            });
+    }
+
+    if (browseVolumesBtn) browseVolumesBtn.addEventListener('click', browseVolumes);
+    if (clearVolumeBtn) clearVolumeBtn.addEventListener('click', clearSelectedVolume);
+    if (volumeSeriesQuery) {
+        volumeSeriesQuery.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                browseVolumes();
+            }
+        });
+    }
+    if (searchQuery && volumeSeriesQuery) {
+        searchQuery.addEventListener('blur', () => {
+            if (!volumeSeriesQuery.value.trim() && searchQuery.value.trim()) {
+                volumeSeriesQuery.value = searchQuery.value.trim().replace(/#?\s*\d+.*$/, '').trim();
+            }
+        });
+    }
+    if (publisherField && volumePublisherFilter) {
+        publisherField.addEventListener('blur', () => {
+            if (!volumePublisherFilter.value.trim() && publisherField.value.trim()) {
+                volumePublisherFilter.value = publisherField.value.trim();
+            }
+        });
+    }
+    
+    function toggleLocalFilters() {
+        if (!localFilters) return;
+        if (searchLocalToggle.checked) {
+            localFilters.classList.remove('d-none');
+        } else {
+            localFilters.classList.add('d-none');
+            if (localSeriesInput) localSeriesInput.value = '';
+            if (localIssueInput) localIssueInput.value = '';
+        }
+    }
+
+    if (searchLocalToggle && localFilters) {
+        toggleLocalFilters();
+        searchLocalToggle.addEventListener('change', toggleLocalFilters);
+    }
+
+    function setCoverStatus(message, type = 'info') {
+        if (!coverSearchStatus) return;
+        coverSearchStatus.className = `alert alert-${type} mt-2`;
+        coverSearchStatus.textContent = message;
+        coverSearchStatus.classList.remove('d-none');
+    }
+
+    function clearCoverStatus() {
+        if (coverSearchStatus) {
+            coverSearchStatus.classList.add('d-none');
+        }
+    }
+
+    function csrfHeaders() {
+        const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+        return {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': token,
+        };
+    }
+
+    if (fetchCoverBtn) {
+        fetchCoverBtn.addEventListener('click', () => {
+            const seriesValue = seriesField.value.trim();
+            const issueValue = issueField.value.trim();
+            const titleValue = titleField.value.trim();
+            const publisherValue = publisherField ? publisherField.value.trim() : '';
+
+            if (!seriesValue && !issueValue && !titleValue) {
+                setCoverStatus('Enter at least series, issue, or title before looking for covers.', 'warning');
+                return;
+            }
+
+            setCoverStatus('Searching ComicVine for cover images...', 'info');
+            fetchCoverBtn.disabled = true;
+
+            const params = new URLSearchParams({
+                series_name: seriesValue,
+                issue_number: issueValue,
+                title: titleValue,
+                publisher: publisherValue,
+            });
+            appendNaPublisherParam(params);
+
+            fetch(`/comics/comicvine/covers/lookup?${params.toString()}`)
+                .then(resp => resp.json().then(data => ({ ok: resp.ok, data })))
+                .then(({ ok, data }) => {
+                    if (!ok || data.error) {
+                        setCoverStatus(data.error || 'Cover lookup failed.', 'danger');
+                        return;
+                    }
+                    const covers = data.covers || [];
+                    if (!covers.length) {
+                        setCoverStatus('No cover images found on ComicVine for this issue.', 'warning');
+                        return;
+                    }
+                    downloadCoversToGallery(covers).catch(() => {});
+                })
+                .catch(err => {
+                    console.error('Cover search failed:', err);
+                    setCoverStatus(`Cover search failed: ${err.message}`, 'danger');
+                })
+                .finally(() => {
+                    fetchCoverBtn.disabled = false;
+                });
+        });
+    }
+
+    const coverPrefetchCache = new Map();
+
+    function prefetchComicVineCovers(comicvineId) {
+        if (!comicvineId || coverPrefetchCache.has(comicvineId)) {
+            return;
+        }
+        coverPrefetchCache.set(
+            comicvineId,
+            fetch(`/comics/comicvine/issue/${comicvineId}/covers`).then((response) => response.json())
+        );
+    }
+
+    function loadComicVineCovers(comic) {
+        const comicvineId = comic.comicvine_id;
+        if (!comicvineId) {
+            if (comic.cover_images && comic.cover_images.length) {
+                downloadCoversToGallery(comic.cover_images).catch(() => {});
+            } else if (comic.cover_image_url) {
+                fetchCoverImage(comic.cover_image_url);
+            }
+            return;
+        }
+
+        const request = coverPrefetchCache.get(comicvineId)
+            || fetch(`/comics/comicvine/issue/${comicvineId}/covers`).then((response) => response.json());
+        request
+            .then(data => {
+                const covers = (data && data.covers) || [];
+                if (covers.length) {
+                    downloadCoversToGallery(covers).catch(() => {});
+                } else if (comic.cover_image_url) {
+                    fetchCoverImage(comic.cover_image_url);
+                }
+            })
+            .catch(err => {
+                console.warn('Could not load ComicVine covers:', err);
+                if (comic.cover_image_url) {
+                    fetchCoverImage(comic.cover_image_url);
+                }
+            });
+    }
+
+    let searchInFlight = false;
+
+    function performSearch() {
+        if (searchInFlight) return;
+        const query = searchQuery.value.trim();
+        const seriesValue = localSeriesInput ? localSeriesInput.value.trim() : '';
+        const issueValue = localIssueInput ? localIssueInput.value.trim() : '';
+        if (!query && !seriesValue && !issueValue && !selectedVolume) {
+            showError('Enter a search term, select a series/issue, or choose a volume.');
+            return;
+        }
+        if (selectedVolume && !query && !issueValue) {
+            showError('Volume selected — enter an issue number (or a query like "#15") to search within that volume.');
+            return;
+        }
+
+        const searchComicVine = document.getElementById('searchComicVine').checked;
+        const searchLocal = document.getElementById('searchLocal').checked;
+        if (!searchComicVine && !searchLocal) {
+            showError('Please select at least one search source');
+            return;
+        }
+
+        searchInFlight = true;
+        searchBtn.disabled = true;
+        searchLoading.classList.remove('d-none');
+        searchResults.classList.add('d-none');
+        searchError.classList.add('d-none');
+
+        const loadingText = searchLoading.querySelector('p');
+        const sources = [];
+        if (searchComicVine) sources.push('ComicVine');
+        if (searchLocal) sources.push('Series Catalog');
+        loadingText.textContent = `Searching ${sources.join(', ')}...`;
+
+        const params = new URLSearchParams({
+            q: query,
+            comicvine: searchComicVine ? '1' : '0',
+            local: searchLocal ? '1' : '0',
+            series_name: seriesValue,
+            issue_number: issueValue
+        });
+        if (selectedVolume) {
+            if (selectedVolume.comicvine_volume_id) {
+                params.set('volume_id', String(selectedVolume.comicvine_volume_id));
+            }
+            if (selectedVolume.local_series_id) {
+                params.set('local_series_id', String(selectedVolume.local_series_id));
+            }
+        }
+        appendNaPublisherParam(params);
+
+        fetch(`/comics/search-api?${params.toString()}`)
+            .then(response => response.json())
+            .then(data => {
+                searchLoading.classList.add('d-none');
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+                if (data.results && data.results.length > 0) {
+                    displayResults(data.results);
+                    if (data.elapsed_ms != null) {
+                        console.info(`Search completed in ${data.elapsed_ms}ms`);
+                    }
+                } else {
+                    showError('No comics found matching your search');
+                }
+            })
+            .catch(error => {
+                searchLoading.classList.add('d-none');
+                showError('Search failed: ' + error.message);
+            })
+            .finally(() => {
+                searchInFlight = false;
+                searchBtn.disabled = false;
+            });
+    }
+
+    searchBtn.addEventListener('click', performSearch);
+
+    searchQuery.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            performSearch();
+        }
+    });
+
+    let searchDebounceTimer = null;
+    searchQuery.addEventListener('input', () => {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            const q = searchQuery.value.trim();
+            if (q.length >= 4 && /#?\d+\s*$/.test(q)) {
+                performSearch();
+            }
+        }, 500);
+    });
+    
+    function displayResults(results) {
+        console.log('displayResults called with:', results);
+        resultsList.innerHTML = '';
+        
+        results.forEach((comic, index) => {
+            console.log('Processing comic:', comic);
+            const resultItem = document.createElement('div');
+            resultItem.className = `list-group-item list-group-item-action${comic.ai_enhanced ? ' border-info' : ''}`;
+            
+            const title = comic.title || 'Unknown Title';
+            const issue = comic.issue_number || 'Unknown Issue';
+            const publisher = comic.publisher || 'Unknown Publisher';
+            const volume = comic.volume || '';
+            const esc = escapeCoverHtml;
+            const issueHeader = `#${esc(issue)} ${esc(title)}`;
+            const coverUrl = safeCoverImageUrl(comic.cover_image_url);
+            
+            const variantNote = comic.variant_cover_name ? `<span class="badge bg-warning text-dark ms-2">${esc(comic.variant_cover_name)}</span>` : '';
+            const conditionNote = comic.condition ? `<span class="badge bg-info ms-2">${esc(comic.condition)}</span>` : '';
+            
+            resultItem.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="d-flex flex-grow-1">
+                        ${coverUrl ? `
+                            <div class="me-3">
+                                <img src="${esc(coverUrl)}" alt="Cover" class="img-thumbnail" style="width: 60px; height: 80px; object-fit: cover;">
+                            </div>
+                        ` : ''}
+                        <div class="flex-grow-1">
+                            <h6 class="mb-1">
+                                ${issueHeader}
+                                ${variantNote}
+                                ${conditionNote}
+                            </h6>
+                            <p class="mb-1 text-muted">${esc(publisher)}${volume ? ' - ' + esc(volume) : ''}</p>
+                            ${comic.volume ? `<small class="text-warning"><i class="bi bi-book"></i> <strong>${esc(comic.volume)}</strong></small><br>` : ''}
+                            ${comic.volume_start_year ? `<small class="text-warning"><i class="bi bi-calendar3"></i> Vol. start: ${esc(comic.volume_start_year)}</small><br>` : ''}
+                            ${comic.release_date ? `<small class="text-primary"><i class="bi bi-calendar"></i> <strong>Release: ${esc(formatDate(comic.release_date))}</strong></small><br>` : ''}
+                            ${comic.characters ? `<small class="text-muted">Characters: ${esc(comic.characters)}</small><br>` : ''}
+                            ${comic.writer ? `<small class="text-muted">Writer: ${esc(comic.writer)}</small><br>` : ''}
+                            ${comic.artist ? `<small class="text-muted">Artist: ${esc(comic.artist)}</small><br>` : ''}
+                            ${comic.penciler ? `<small class="text-muted">Penciler: ${esc(comic.penciler)}</small><br>` : ''}
+                            ${comic.inker ? `<small class="text-muted">Inker: ${esc(comic.inker)}</small><br>` : ''}
+                            ${!comic.writer && comic.writers && comic.writers.length > 0 ? `<small class="text-muted">Writers: ${esc(comic.writers.join(', '))}</small><br>` : ''}
+                            ${!comic.artist && comic.artists && comic.artists.length > 0 ? `<small class="text-muted">Artists: ${esc(comic.artists.join(', '))}</small><br>` : ''}
+                            ${comic.story_arc ? `<small class="text-muted">Story Arc: ${esc(comic.story_arc)}</small><br>` : ''}
+                            ${comic.upc ? `<small class="text-info"><i class="bi bi-upc-scan"></i> UPC: ${esc(comic.upc)}</small><br>` : ''}
+                            ${comic.source ? `<small class="text-secondary">Source: ${esc(comic.source)}${comic.ai_enhanced ? ' <i class="bi bi-robot text-info"></i>' : ''}${comic.needs_details ? ' <span class="badge bg-warning">Needs Details</span>' : ''}</small>` : ''}
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary select-comic-btn" data-index="${index}">
+                        <i class="bi bi-check"></i> Select
+                    </button>
+                </div>
+            `;
+            
+            resultsList.appendChild(resultItem);
+
+            if (comic.comicvine_id && comic.has_variants_endpoint) {
+                resultItem.addEventListener('mouseenter', () => {
+                    prefetchComicVineCovers(comic.comicvine_id);
+                }, { once: true });
+            }
+        });
+        
+        // Store results for selection
+        window.searchResults = results;
+        searchResults.classList.remove('d-none');
+        
+        // Add event listeners for select buttons
+        resultsList.querySelectorAll('.select-comic-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const index = parseInt(this.getAttribute('data-index'));
+                selectComic(index);
+            });
+        });
+    }
+    
+    function showError(message) {
+        searchError.textContent = message;
+        searchError.classList.remove('d-none');
+    }
+    
+    function showDetailsPrompt(comic) {
+        // Create modal for additional details
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.id = 'detailsModal';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="bi bi-robot"></i> AI Metadata Assistant - Additional Details Needed
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i> 
+                            The AI found basic information for <strong>${escapeCoverHtml(comic.title)} #${escapeCoverHtml(comic.issue_number)}</strong>,
+                            but could use additional details to provide more comprehensive metadata.
+                            <br><small class="text-muted">Release dates are especially important for distinguishing between different series of the same comic.</small>
+                        </div>
+                        
+                        <form id="detailsForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Release Date</label>
+                                        <input type="date" class="form-control" id="modalReleaseDate" placeholder="YYYY-MM-DD">
+                                        <small class="form-text text-muted">
+                                            <strong>Quick Date Suggestions:</strong><br>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('1968-05-01')">1968 (Original)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('1996-01-01')">1996 (Vol 2)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('2004-01-01')">2004 (Vol 3)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('2008-01-01')">2008 (Vol 4)</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="setQuickDate('2012-01-01')">2012 (Modern)</button>
+                                        </small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">UPC Code</label>
+                                        <input type="text" class="form-control" id="modalUPC" placeholder="12-13 digit UPC">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Genre</label>
+                                <input type="text" class="form-control" id="modalGenre" placeholder="e.g., Superhero, Action, Horror">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Characters</label>
+                                <input type="text" class="form-control" id="modalCharacters" placeholder="e.g., Spider-Man, Peter Parker, Mary Jane">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Description</label>
+                                <textarea class="form-control" id="modalDescription" rows="3" placeholder="Brief description of the comic..."></textarea>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Writers</label>
+                                        <input type="text" class="form-control" id="modalWriters" placeholder="e.g., Stan Lee, Steve Ditko">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Artists</label>
+                                        <input type="text" class="form-control" id="modalArtists" placeholder="e.g., Steve Ditko, John Romita">
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Skip</button>
+                        <button type="button" class="btn btn-primary" onclick="applyDetails()">
+                            <i class="bi bi-check"></i> Apply Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Show the modal
+        const bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+        
+        // Store the comic data for later use
+        window.currentComicDetails = comic;
+        
+        // Clean up modal when hidden
+        modal.addEventListener('hidden.bs.modal', function() {
+            document.body.removeChild(modal);
+        });
+    }
+    
+    function applyDetails() {
+        const comic = window.currentComicDetails;
+        if (!comic) return;
+        
+        // Get values from modal
+        const releaseDate = document.getElementById('modalReleaseDate').value;
+        const upc = document.getElementById('modalUPC').value;
+        const genre = document.getElementById('modalGenre').value;
+        const characters = document.getElementById('modalCharacters').value;
+        const description = document.getElementById('modalDescription').value;
+        const writers = document.getElementById('modalWriters').value;
+        const artists = document.getElementById('modalArtists').value;
+        
+        // Update form fields with enhanced data
+        if (releaseDate) {
+            releaseDateField.value = releaseDate;
+        }
+        if (upc) {
+            upcField.value = upc;
+        }
+        if (genre) {
+            genreField.value = genre;
+        }
+        if (characters) {
+            charactersField.value = characters;
+        }
+        if (description) {
+            if (descriptionField) {
+                descriptionField.value = description;
+            }
+        }
+        if (writers && writerField) {
+            writerField.value = writers;
+        }
+        if (artists && artistField) {
+            artistField.value = artists;
+        }
+        
+        // Show success message
+        const successMsg = document.createElement('div');
+        successMsg.className = 'alert alert-success mt-2';
+        successMsg.innerHTML = '<i class="bi bi-check-circle"></i> Additional details applied successfully!';
+        titleField.parentNode.parentNode.appendChild(successMsg);
+        
+        // Remove message after 5 seconds
+        setTimeout(() => successMsg.remove(), 5000);
+        
+        // Close modal
+        const modal = document.getElementById('detailsModal');
+        if (modal) {
+            const bsModal = bootstrap.Modal.getInstance(modal);
+            bsModal.hide();
+        }
+    }
+    
+    function setQuickDate(dateString) {
+        document.getElementById('modalReleaseDate').value = dateString;
+    }
+    
+    // Helper function to format dates
+    function formatDate(dateString) {
+        if (!dateString) return '';
+        
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return dateString;
+            
+            // Format as MM/DD/YYYY or just YYYY if only year is available
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1;
+            const day = date.getDate();
+            
+            // If it's just a year (month/day are 1/1), show only year
+            if (month === 1 && day === 1) {
+                return year.toString();
+            }
+            
+            // Otherwise show full date
+            return `${month.toString().padStart(2, '0')}/${day.toString().padStart(2, '0')}/${year}`;
+        } catch (e) {
+            return dateString;
+        }
+    }
+    
+    // Global function to select a comic
+    function fillFormFromComicMetadata(comic) {
+        if (!comic) return;
+
+        titleField.value = comic.title || '';
+        seriesField.value = comic.series || comic.volume || '';
+        if (localSeriesInput) {
+            localSeriesInput.value = comic.series || comic.volume || '';
+        }
+        if (localIssueInput) {
+            localIssueInput.value = comic.issue_number || '';
+        }
+        issueField.value = comic.issue_number || '';
+        publisherField.value = comic.publisher || '';
+        genreField.value = comic.genre || '';
+        charactersField.value = comic.characters || '';
+        if (writerField) {
+            writerField.value = comic.writer || (Array.isArray(comic.writers) ? comic.writers.join(', ') : '');
+        }
+        if (artistField) {
+            artistField.value = comic.artist || (Array.isArray(comic.artists) ? comic.artists.join(', ') : '');
+        }
+        Object.entries(creditFieldIds).forEach(([key, domId]) => {
+            const field = document.getElementById(domId);
+            if (field) field.value = comic[key] || '';
+        });
+        if (storyArcField) storyArcField.value = comic.story_arc || '';
+        if (teamsField) teamsField.value = comic.teams || '';
+        if (descriptionField) descriptionField.value = comic.description || '';
+        if (comicvineIssueIdField) {
+            comicvineIssueIdField.value = comic.comicvine_id || comic.id || '';
+        }
+        if (comicvineUrlField) {
+            comicvineUrlField.value = comic.comicvine_url || '';
+        }
+        upcField.value = comic.upc || '';
+
+        if (comic.release_date && releaseDateField) {
+            const date = new Date(comic.release_date);
+            if (!isNaN(date.getTime())) {
+                releaseDateField.value = date.toISOString().split('T')[0];
+            }
+        }
+    }
+
+    function setEnrichComicStatus(message, level) {
+        const statusEl = document.getElementById('enrichComicStatus');
+        if (!statusEl) return;
+        statusEl.className = `alert alert-${level || 'info'} mb-3`;
+        statusEl.textContent = message;
+        statusEl.classList.remove('d-none');
+    }
+
+    function readFormValueFields() {
+        const conditionField = document.getElementById('comicCondition') || document.getElementById('condition');
+        return {
+            series: seriesField?.value || '',
+            title: titleField?.value || '',
+            issue_number: issueField?.value || '',
+            publisher: publisherField?.value || '',
+            condition: conditionField?.value || '',
+        };
+    }
+
+    const enrichComicBtn = document.getElementById('enrichComicBtn');
+    if (enrichComicBtn && window.ComicEnrich) {
+        enrichComicBtn.addEventListener('click', async () => {
+            const comicId = enrichComicBtn.dataset.comicId || null;
+            const originalHtml = enrichComicBtn.innerHTML;
+            enrichComicBtn.disabled = true;
+
+            try {
+                const result = await window.ComicEnrich.enrichAll({
+                    comicId: comicId,
+                    comicvineMethod: 'GET',
+                    naPublishersOnly: (function () {
+                        // Match search-panel behavior: omit param when NA-only is checked (default).
+                        if (typeof naPublishersOnly !== 'undefined' && naPublishersOnly && !naPublishersOnly.checked) {
+                            return false;
+                        }
+                        return undefined;
+                    })(),
+                    saveValue: false,
+                    confirm: comicId
+                        ? 'Enrich this comic from ComicVine, scan the cover barcode, and look up eBay market value? Form fields will be filled — click Save Comic to keep changes.'
+                        : 'Look up eBay market value from the current form fields? ComicVine refresh and barcode scan need a saved comic with a cover.',
+                    getFields: readFormValueFields,
+                    onStatus: setEnrichComicStatus,
+                    onComicVine: async function (comicvineResult) {
+                        if (!comicvineResult.ok) {
+                            if (!comicvineResult.skipped) {
+                                setEnrichComicStatus(comicvineResult.error || 'ComicVine refresh failed.', 'danger');
+                            }
+                            return;
+                        }
+                        fillFormFromComicMetadata(comicvineResult.data.metadata || {});
+                        const covers = comicvineResult.data.covers || [];
+                        if (!covers.length) {
+                            return;
+                        }
+                        setEnrichComicStatus(
+                            `Metadata refreshed. Adding ${covers.length} cover variant(s)…`,
+                            'info'
+                        );
+                        try {
+                            const coverResult = await downloadCoversToGallery(covers);
+                            const skippedMessage = coverResult.skipped
+                                ? ` (${coverResult.skipped} unavailable cover${coverResult.skipped === 1 ? '' : 's'} skipped)`
+                                : '';
+                            setEnrichComicStatus(
+                                `Metadata and ${coverResult.added} cover variant(s) refreshed${skippedMessage}.`,
+                                coverResult.skipped ? 'warning' : 'info'
+                            );
+                        } catch (error) {
+                            setEnrichComicStatus(
+                                `Metadata refreshed, but cover variants could not be added: ${error.message}`,
+                                'warning'
+                            );
+                        }
+                    },
+                    onBarcode: function (barcodeResult) {
+                        const upcInput = document.getElementById('comicUPC');
+                        if (barcodeResult.ok && upcInput && barcodeResult.data && barcodeResult.data.upc) {
+                            upcInput.value = barcodeResult.data.upc;
+                            const scanBtn = document.getElementById('scanCoverBarcodeBtn');
+                            if (scanBtn) scanBtn.dataset.existingUpc = barcodeResult.data.upc;
+                        }
+                    },
+                    onValue: function (valueResult) {
+                        const estimatedValueField = document.getElementById('estimatedValueField');
+                        if (!valueResult.ok || !valueResult.estimate) return;
+                        if (estimatedValueField) {
+                            estimatedValueField.value = parseFloat(valueResult.estimate.value).toFixed(2);
+                        }
+                        const host = estimatedValueField
+                            ? (estimatedValueField.closest('.mb-3') || estimatedValueField.parentNode)
+                            : document.getElementById('enrichComicStatus')?.parentNode;
+                        if (host) {
+                            let panelHost = document.getElementById('formValueEstimateHost');
+                            if (!panelHost) {
+                                panelHost = document.createElement('div');
+                                panelHost.id = 'formValueEstimateHost';
+                                panelHost.className = 'mt-2';
+                                host.appendChild(panelHost);
+                            }
+                            window.ComicEnrich.renderValuePanel(panelHost, valueResult.estimate);
+                        }
+                    },
+                });
+
+                if (result.cancelled) return;
+                const suffix = comicId
+                    ? ' Click Save Comic to keep changes.'
+                    : ' Save the comic (with a cover) to enable ComicVine refresh and barcode scan.';
+                setEnrichComicStatus((result.summary || 'Enrichment finished.') + suffix, result.ok ? 'success' : 'warning');
+            } catch (err) {
+                setEnrichComicStatus('Enrichment failed: ' + err.message, 'danger');
+            } finally {
+                enrichComicBtn.disabled = false;
+                enrichComicBtn.innerHTML = originalHtml;
+            }
+        });
+    }
+
+    window.selectComic = function(index) {
+        const comic = window.searchResults[index];
+        console.log('selectComic called with comic:', comic);
+        
+        fillFormFromComicMetadata(comic);
+        
+        // Handle AI-enhanced data
+        if (comic.ai_enhanced) {
+            // Show AI enhancement indicator
+            const aiIndicator = document.createElement('div');
+            aiIndicator.className = 'alert alert-info mt-2';
+            aiIndicator.innerHTML = '<i class="bi bi-robot"></i> This data was enhanced by AI Metadata Assistant';
+            titleField.parentNode.parentNode.appendChild(aiIndicator);
+            
+            // Remove indicator after 5 seconds
+            setTimeout(() => aiIndicator.remove(), 5000);
+            
+            // If AI result needs more details, show a prompt
+            if (comic.needs_details) {
+                showDetailsPrompt(comic);
+            }
+        }
+        
+        // Cover handling: prefer lazy ComicVine variant lookup when we have an id.
+        if (comic.cover_images && comic.cover_images.length > 0) {
+            downloadCoversToGallery(comic.cover_images).catch(() => {});
+        } else if (comic.comicvine_id) {
+            loadComicVineCovers(comic);
+        } else if (comic.cover_image_url) {
+            fetchCoverImage(comic.cover_image_url);
+        }
+
+        // Hide search results
+        searchResults.classList.add('d-none');
+        
+        // Scroll to form
+        titleField.scrollIntoView({ behavior: 'smooth' });
+    };
+    
+    function escapeCoverHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function safeCoverImageUrl(value) {
+        if (!value) return '';
+        try {
+            const url = new URL(value, window.location.origin);
+            return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    let storedCoverVariants = [];
+    const primaryCoverEndpoint = {% if comic %}{{ url_for("comics.set_primary_cover", id=comic.id)|tojson }}{% else %}null{% endif %};
+
+    function ensureCoverHiddenInputs() {
+        const form = document.querySelector('form');
+        if (!form) return {};
+
+        let blobInput = form.querySelector('input[name="fetched_cover_blob"]');
+        if (!blobInput) {
+            blobInput = document.createElement('input');
+            blobInput.type = 'hidden';
+            blobInput.name = 'fetched_cover_blob';
+            form.appendChild(blobInput);
+        }
+
+        let mimeInput = form.querySelector('input[name="fetched_cover_mime"]');
+        if (!mimeInput) {
+            mimeInput = document.createElement('input');
+            mimeInput.type = 'hidden';
+            mimeInput.name = 'fetched_cover_mime';
+            form.appendChild(mimeInput);
+        }
+
+        let additionalInput = form.querySelector('input[name="additional_covers"]');
+        if (!additionalInput) {
+            additionalInput = document.createElement('input');
+            additionalInput.type = 'hidden';
+            additionalInput.name = 'additional_covers';
+            form.appendChild(additionalInput);
+        }
+
+        let coversUpdatedInput = form.querySelector('input[name="covers_updated"]');
+        if (!coversUpdatedInput) {
+            coversUpdatedInput = document.createElement('input');
+            coversUpdatedInput.type = 'hidden';
+            coversUpdatedInput.name = 'covers_updated';
+            coversUpdatedInput.value = '0';
+            form.appendChild(coversUpdatedInput);
+        }
+
+        return { blobInput, mimeInput, additionalInput, coversUpdatedInput, form };
+    }
+
+    function setCoversUpdated(updated) {
+        const inputs = ensureCoverHiddenInputs();
+        if (inputs.coversUpdatedInput) {
+            inputs.coversUpdatedInput.value = updated ? '1' : '0';
+        }
+    }
+
+    function coverPreviewSrc(cover) {
+        if (cover.preview_url) {
+            return cover.preview_url;
+        }
+        return `data:${cover.mime_type || 'image/jpeg'};base64,${cover.blob_data}`;
+    }
+
+    function renderStoredCoversGallery() {
+        const section = document.getElementById('storedCoversSection');
+        const gallery = document.getElementById('storedCoversGallery');
+        if (!gallery) return;
+
+        if (!storedCoverVariants.length) {
+            section?.classList.add('d-none');
+            gallery.innerHTML = '';
+            return;
+        }
+
+        section?.classList.remove('d-none');
+        gallery.innerHTML = storedCoverVariants.map((cover, index) => {
+            const isPrimary = index === 0;
+            const src = coverPreviewSrc(cover);
+            const label = escapeCoverHtml(cover.label || (isPrimary ? 'Primary Cover' : `Cover ${index + 1}`));
+            return `
+                <div class="stored-cover-item${isPrimary ? ' is-primary' : ''}">
+                    <img src="${src}" alt="${label}">
+                    <span class="stored-cover-label">${label}</span>
+                    ${isPrimary
+                        ? '<span class="stored-cover-badge">Primary</span>'
+                        : `<button type="button" class="btn btn-outline-primary btn-sm stored-cover-set-primary" data-cover-index="${index}">Set as Primary</button>`
+                    }
+                </div>
+            `;
+        }).join('');
+
+        gallery.querySelectorAll('.stored-cover-set-primary').forEach(button => {
+            button.addEventListener('click', function() {
+                swapStoredPrimaryCover(parseInt(this.dataset.coverIndex, 10));
+            });
+        });
+    }
+
+    function updateCoverFormFields(primaryCover, additionalCovers) {
+        const inputs = ensureCoverHiddenInputs();
+        inputs.blobInput.value = primaryCover.blob_data;
+        inputs.mimeInput.value = primaryCover.mime_type || 'image/jpeg';
+        inputs.additionalInput.value = additionalCovers.length
+            ? JSON.stringify(additionalCovers)
+            : '';
+    }
+
+    function setStoredCoverVariants(covers, markUpdated) {
+        storedCoverVariants = covers.map((cover, index) => ({
+            id: cover.id || null,
+            blob_data: cover.blob_data || null,
+            mime_type: cover.mime_type || 'image/jpeg',
+            label: cover.label || (index === 0 ? 'Primary Cover' : `Cover ${index + 1}`),
+            preview_url: cover.preview_url || null,
+        }));
+        renderStoredCoversGallery();
+        if (markUpdated) {
+            setCoversUpdated(true);
+        }
+    }
+
+    async function swapStoredPrimaryCover(index) {
+        if (index <= 0 || index >= storedCoverVariants.length) {
+            return;
+        }
+
+        const selected = storedCoverVariants[index];
+
+        // Already-saved variants can be promoted with a small API call.
+        // Newly downloaded Base64 covers still use the local swap + save flow.
+        if (selected.id && !selected.blob_data) {
+            setCoverStatus(`Setting "${selected.label}" as primary...`, 'info');
+            try {
+                const form = document.querySelector('form');
+                const response = await fetch(primaryCoverEndpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': form?.querySelector('input[name="csrf_token"]')?.value || '',
+                    },
+                    body: JSON.stringify({ cover_id: selected.id }),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Could not update the primary cover.');
+                }
+                const variants = (data.covers || []).map((cover, coverIndex) => ({
+                    id: cover.id,
+                    blob_data: null,
+                    mime_type: 'image/jpeg',
+                    label: cover.label || (coverIndex === 0 ? 'Primary Cover' : `Cover ${coverIndex + 1}`),
+                    preview_url: cover.url,
+                }));
+                setStoredCoverVariants(variants, false);
+                setCoversUpdated(false);
+                const previewHost = document.getElementById('fetchedCoverPreview');
+                if (previewHost && variants[0]?.preview_url) {
+                    previewHost.innerHTML = `
+                        <small class="text-muted">Primary cover:</small>
+                        <img src="${variants[0].preview_url}" alt="Primary cover" class="img-thumbnail mt-1" style="max-height: 160px;">
+                    `;
+                }
+                setCoverStatus(`"${variants[0].label}" is now the primary cover.`, 'success');
+                setTimeout(clearCoverStatus, 5000);
+            } catch (error) {
+                setCoverStatus(`Could not set primary cover: ${error.message}`, 'danger');
+            }
+            return;
+        }
+
+        if (!selected.blob_data || !storedCoverVariants[0].blob_data) {
+            setCoverStatus('Reload the page, then set the primary cover again.', 'warning');
+            return;
+        }
+
+        const covers = storedCoverVariants.map(cover => ({ ...cover, preview_url: null }));
+        const newPrimary = covers[index];
+        const oldPrimary = covers[0];
+        covers[0] = newPrimary;
+        covers[index] = oldPrimary;
+        storedCoverVariants = covers;
+
+        const additional = covers.slice(1).map(cover => ({
+            blob_data: cover.blob_data,
+            mime_type: cover.mime_type,
+            label: cover.label,
+        }));
+        updateCoverFormFields(covers[0], additional);
+        setCoversUpdated(true);
+        showFetchedCoverPreview(covers[0].blob_data, covers[0].mime_type);
+        renderStoredCoversGallery();
+        setCoverStatus(`"${covers[0].label}" set as primary. Save the comic to keep this change.`, 'success');
+        setTimeout(clearCoverStatus, 5000);
+    }
+
+    function showFetchedCoverPreview(blobData, mimeType) {
+        const previewHost = document.getElementById('fetchedCoverPreview');
+        const src = `data:${mimeType || 'image/jpeg'};base64,${blobData}`;
+        if (previewHost) {
+            previewHost.innerHTML = `
+                <small class="text-muted">Selected cover preview:</small>
+                <img src="${src}" alt="Selected cover preview" class="img-thumbnail mt-1" style="max-height: 160px;">
+            `;
+            return;
+        }
+        const status = document.getElementById('coverSearchStatus');
+        if (status) {
+            status.className = 'alert alert-success mt-2';
+            status.innerHTML = `
+                <div><i class="bi bi-check-circle"></i> Cover selected. Save the comic to apply it.</div>
+                <img src="${src}" alt="Selected cover preview" class="img-thumbnail mt-2" style="max-height: 160px;">
+            `;
+            status.classList.remove('d-none');
+        }
+    }
+
+    function applyFetchedCoverBlobs(primaryCover, additionalCovers, label) {
+        const primary = {
+            id: null,
+            blob_data: primaryCover.blob_data,
+            mime_type: primaryCover.mime_type || 'image/jpeg',
+            label: label || 'Primary Cover',
+            preview_url: null,
+        };
+        const additional = (additionalCovers || []).map((cover, index) => ({
+            id: null,
+            blob_data: cover.blob_data,
+            mime_type: cover.mime_type || 'image/jpeg',
+            label: cover.label || `Cover ${index + 2}`,
+            preview_url: null,
+        }));
+
+        updateCoverFormFields(primary, additional);
+        setStoredCoverVariants([primary, ...additional], true);
+        showFetchedCoverPreview(primary.blob_data, primary.mime_type);
+        const coverCount = 1 + additional.length;
+        const statusLabel = coverCount > 1
+            ? `${coverCount} covers stored (${label || 'Primary Cover'} is primary)`
+            : (label || 'Cover');
+        setCoverStatus(`${statusLabel}. Save the comic to apply.`, 'success');
+        setTimeout(clearCoverStatus, 5000);
+    }
+
+    function fetchCoverBlobFromUrl(imageUrl) {
+        return fetch(`/comics/fetch-cover?url=${encodeURIComponent(imageUrl)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (!data.blob_data) {
+                    throw new Error(data.error || 'Failed to download cover image');
+                }
+                return data;
+            });
+    }
+
+    function downloadCoversToGallery(coverImages) {
+        const covers = (coverImages || []).filter(cover => cover && cover.url);
+        if (!covers.length) {
+            setCoverStatus('No cover images are available to add.', 'warning');
+            return Promise.resolve({ added: 0, skipped: 0 });
+        }
+
+        setCoverStatus(`Adding ${covers.length} cover image(s) to the Cover Variants section...`, 'info');
+        return Promise.allSettled(covers.map((cover, index) => fetchCoverBlobFromUrl(cover.url).then(data => ({
+            blob_data: data.blob_data,
+            mime_type: data.mime_type,
+            label: cover.label || (index === 0 ? 'Regular Cover' : `Variant Cover ${index}`),
+        }))))
+            .then(results => {
+                const downloaded = results
+                    .filter(result => result.status === 'fulfilled')
+                    .map(result => result.value);
+                const skipped = results.length - downloaded.length;
+                if (!downloaded.length) {
+                    const firstError = results.find(result => result.status === 'rejected');
+                    throw firstError?.reason || new Error('No cover images could be downloaded.');
+                }
+                const [primary, ...additional] = downloaded;
+                applyFetchedCoverBlobs(primary, additional, primary.label);
+                if (skipped) {
+                    setCoverStatus(
+                        `Added ${downloaded.length} cover image(s); skipped ${skipped} unavailable image(s). Save the comic to keep them.`,
+                        'warning'
+                    );
+                }
+                return { added: downloaded.length, skipped };
+            })
+            .catch(error => {
+                setCoverStatus(`Failed to add covers: ${error.message}`, 'danger');
+                throw error;
+            });
+    }
+
+    function fetchCoverImage(imageUrl) {
+        fetchCoverBlobFromUrl(imageUrl)
+            .then(data => {
+                applyFetchedCoverBlobs(
+                    { blob_data: data.blob_data, mime_type: data.mime_type },
+                    [],
+                    'Cover'
+                );
+            })
+            .catch(error => {
+                console.error('Failed to fetch cover image:', error);
+                setCoverStatus(`Failed to fetch cover image: ${error.message}`, 'danger');
+            });
+    }
+    
+    // Allow Enter key to trigger search
+    searchQuery.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            searchBtn.click();
+        }
+    });
+    
+    // AI Value Lookup functionality
+    const valueLookupBtn = document.getElementById('valueLookupBtn');
+    const estimatedValueField = document.getElementById('estimatedValueField');
+    
+    // Currency formatting function
+    function formatAsCurrency(value) {
+        if (!value) return '';
+        const num = parseFloat(value);
+        if (isNaN(num)) return value;
+        return num.toFixed(2);
+    }
+    
+    // Format to two decimals only when the field is left alone. Formatting on
+    // every keystroke rewrites "1" as "1.00" and makes typing a value painful.
+    if (estimatedValueField) {
+        if (estimatedValueField.value) {
+            estimatedValueField.value = formatAsCurrency(estimatedValueField.value);
+        }
+        estimatedValueField.addEventListener('blur', function() {
+            if (this.value) {
+                this.value = formatAsCurrency(this.value);
+            }
+        });
+    }
+    
+    if (valueLookupBtn && estimatedValueField && window.ComicEnrich) {
+        const valuePanelHost = estimatedValueField.closest('.mb-3') || estimatedValueField.parentNode.parentNode;
+
+        valueLookupBtn.addEventListener('click', async function() {
+            const fields = readFormValueFields();
+            if (!fields.series && !fields.title && !fields.issue_number) {
+                alert('Please fill in at least the Series, Title, or Issue Number before looking up a value.');
+                return;
+            }
+
+            valueLookupBtn.disabled = true;
+            valueLookupBtn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+            const existing = document.getElementById('valueEstimatePanel');
+            if (existing) existing.remove();
+            const existingHost = document.getElementById('formValueEstimateHost');
+            if (existingHost) existingHost.innerHTML = '';
+
+            try {
+                const result = await window.ComicEnrich.lookupValue(fields);
+                if (!result.ok) {
+                    throw new Error(result.error || 'Failed to estimate a value');
+                }
+                estimatedValueField.value = parseFloat(result.estimate.value).toFixed(2);
+                let panelHost = document.getElementById('formValueEstimateHost');
+                if (!panelHost) {
+                    panelHost = document.createElement('div');
+                    panelHost.id = 'formValueEstimateHost';
+                    panelHost.className = 'mt-2';
+                    valuePanelHost.appendChild(panelHost);
+                }
+                window.ComicEnrich.renderValuePanel(panelHost, result.estimate);
+            } catch (error) {
+                console.error('Value lookup error:', error);
+                const errorMsg = document.createElement('div');
+                errorMsg.id = 'valueEstimatePanel';
+                errorMsg.className = 'alert alert-warning mt-2 mb-0';
+                errorMsg.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Could not estimate a value: ${escapeCoverHtml(error.message)}. Please enter one manually.`;
+                valuePanelHost.appendChild(errorMsg);
+                setTimeout(() => errorMsg.remove(), 8000);
+            } finally {
+                valueLookupBtn.disabled = false;
+                valueLookupBtn.innerHTML = '<i class="bi bi-robot"></i>';
+            }
+        });
+    }
+
+    // --- Bulk Add ---
+    const bulkPreviewBtn = document.getElementById('bulkPreviewBtn');
+    const bulkAddBtn = document.getElementById('bulkAddBtn');
+    if (bulkPreviewBtn && bulkAddBtn) {
+        const bulkSeries = document.getElementById('bulkSeries');
+        const bulkIssueRanges = document.getElementById('bulkIssueRanges');
+        const bulkStartYear = document.getElementById('bulkStartYear');
+        const bulkVolumeHint = document.getElementById('bulkVolumeHint');
+        const bulkCondition = document.getElementById('bulkCondition');
+        const bulkSkipExisting = document.getElementById('bulkSkipExisting');
+        const bulkPreview = document.getElementById('bulkPreview');
+        const bulkError = document.getElementById('bulkError');
+        const bulkProgress = document.getElementById('bulkProgress');
+        const bulkProgressBar = document.getElementById('bulkProgressBar');
+        const bulkProgressLabel = document.getElementById('bulkProgressLabel');
+        const bulkProgressCount = document.getElementById('bulkProgressCount');
+        const bulkResults = document.getElementById('bulkResults');
+        const bulkResultsList = document.getElementById('bulkResultsList');
+
+        let bulkIssuesQueue = [];
+        let bulkRunning = false;
+
+        function showBulkError(message) {
+            bulkError.textContent = message;
+            bulkError.classList.remove('d-none');
+        }
+
+        function clearBulkError() {
+            bulkError.classList.add('d-none');
+            bulkError.textContent = '';
+        }
+
+        async function parseBulkRanges() {
+            clearBulkError();
+            bulkPreview.classList.add('d-none');
+            const rangesText = bulkIssueRanges.value.trim();
+            if (!rangesText) {
+                showBulkError('Enter issue ranges (e.g. 1-32 or 1-14, 16-22).');
+                return null;
+            }
+            const response = await fetch('/comics/bulk-add/parse', {
+                method: 'POST',
+                headers: csrfHeaders(),
+                body: JSON.stringify({ issue_ranges: rangesText }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                showBulkError(data.error || 'Could not parse issue ranges.');
+                return null;
+            }
+            return data.issues;
+        }
+
+        bulkPreviewBtn.addEventListener('click', async () => {
+            const series = bulkSeries.value.trim();
+            if (!series) {
+                showBulkError('Enter a series name.');
+                return;
+            }
+            const issues = await parseBulkRanges();
+            if (!issues) return;
+            bulkIssuesQueue = issues;
+            bulkPreview.textContent = `${issues.length} issue(s) will be added for "${series}": #${issues.join(', #')}`;
+            bulkPreview.classList.remove('d-none');
+        });
+
+        async function runBulkAdd() {
+            if (bulkRunning) return;
+            clearBulkError();
+            bulkResults.classList.add('d-none');
+            bulkResultsList.innerHTML = '';
+
+            const series = bulkSeries.value.trim();
+            if (!series) {
+                showBulkError('Enter a series name.');
+                return;
+            }
+
+            const issues = bulkIssuesQueue.length
+                ? bulkIssuesQueue
+                : await parseBulkRanges();
+            if (!issues || !issues.length) return;
+
+            bulkRunning = true;
+            bulkPreviewBtn.disabled = true;
+            bulkAddBtn.disabled = true;
+            bulkProgress.classList.remove('d-none');
+            bulkProgressBar.style.width = '0%';
+            bulkProgressCount.textContent = `0 / ${issues.length}`;
+
+            const summary = { added: 0, skipped: 0, failed: 0 };
+            const payloadBase = {
+                series,
+                start_year: bulkStartYear.value.trim() || null,
+                volume_hint: bulkVolumeHint.value.trim(),
+                condition: bulkCondition.value,
+                skip_existing: bulkSkipExisting.checked,
+                in_collection: !!(document.getElementById('bulkInCollection')?.checked),
+                is_digital: !!(document.getElementById('bulkIsDigital')?.checked),
+            };
+            if (selectedVolume && selectedVolume.comicvine_volume_id) {
+                payloadBase.volume_id = selectedVolume.comicvine_volume_id;
+            }
+
+            for (let i = 0; i < issues.length; i++) {
+                const issueNumber = issues[i];
+                bulkProgressLabel.textContent = `Adding ${series} #${issueNumber}...`;
+                bulkProgressCount.textContent = `${i} / ${issues.length}`;
+
+                try {
+                    const response = await fetch('/comics/bulk-add/issue', {
+                        method: 'POST',
+                        headers: csrfHeaders(),
+                        body: JSON.stringify({ ...payloadBase, issue_number: issueNumber }),
+                    });
+                    const result = await response.json();
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item py-1';
+
+                    if (result.status === 'added') {
+                        summary.added += 1;
+                        li.classList.add('list-group-item-success');
+                        li.textContent = `#${result.issue_number} ${result.title || ''} — added`;
+                    } else if (result.status === 'skipped') {
+                        summary.skipped += 1;
+                        li.classList.add('list-group-item-warning');
+                        li.textContent = `#${result.issue_number} — skipped (${result.reason || 'duplicate'})`;
+                    } else {
+                        summary.failed += 1;
+                        li.classList.add('list-group-item-danger');
+                        li.textContent = `#${issueNumber} — ${result.error || 'failed'}`;
+                    }
+                    bulkResultsList.appendChild(li);
+                } catch (err) {
+                    summary.failed += 1;
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item list-group-item-danger py-1';
+                    li.textContent = `#${issueNumber} — ${err.message}`;
+                    bulkResultsList.appendChild(li);
+                }
+
+                const pct = Math.round(((i + 1) / issues.length) * 100);
+                bulkProgressBar.style.width = `${pct}%`;
+                bulkProgressCount.textContent = `${i + 1} / ${issues.length}`;
+            }
+
+            bulkProgressLabel.textContent = 'Done';
+            bulkProgressBar.classList.remove('progress-bar-animated');
+            bulkResults.classList.remove('d-none');
+
+            bulkPreview.textContent = `Finished: ${summary.added} added, ${summary.skipped} skipped, ${summary.failed} failed.`;
+            bulkPreview.classList.remove('d-none');
+
+            bulkRunning = false;
+            bulkPreviewBtn.disabled = false;
+            bulkAddBtn.disabled = false;
+            bulkIssuesQueue = [];
+        }
+
+        bulkAddBtn.addEventListener('click', runBulkAdd);
+    }
+
+    {% if comic %}
+    async function uploadCoverVariantsBeforeSave() {
+        const form = document.querySelector('form[method="POST"][enctype="multipart/form-data"]');
+        const inputs = ensureCoverHiddenInputs();
+
+        if (!form || inputs.coversUpdatedInput.value !== '1') {
+            return true;
+        }
+
+        const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+        submitButtons.forEach(button => button.disabled = true);
+        setCoverStatus(`Saving ${storedCoverVariants.length} cover image(s)...`, 'info');
+
+        try {
+            for (let index = 0; index < storedCoverVariants.length; index += 1) {
+                const cover = storedCoverVariants[index];
+                const response = await fetch('{{ url_for("comics.save_cover_variant", id=comic.id) }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': form.querySelector('input[name="csrf_token"]')?.value || '',
+                    },
+                    body: JSON.stringify({
+                        replace: index === 0,
+                        position: index,
+                        cover: {
+                            blob_data: cover.blob_data,
+                            mime_type: cover.mime_type,
+                            label: cover.label,
+                        },
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || `Could not save cover ${index + 1}.`);
+                }
+            }
+
+            // The variants are already committed individually. Do not attach
+            // their Base64 data to the regular metadata form submission.
+            inputs.blobInput.value = '';
+            inputs.mimeInput.value = '';
+            inputs.additionalInput.value = '';
+            setCoversUpdated(false);
+            return true;
+        } catch (error) {
+            setCoverStatus(`Cover images were not saved: ${error.message}`, 'danger');
+            submitButtons.forEach(button => button.disabled = false);
+            return false;
+        }
+    }
+
+    const comicEditForm = document.querySelector('form[method="POST"][enctype="multipart/form-data"]');
+    if (comicEditForm) {
+        comicEditForm.addEventListener('submit', async function(event) {
+            const inputs = ensureCoverHiddenInputs();
+            if (inputs.coversUpdatedInput.value !== '1') {
+                return;
+            }
+
+            event.preventDefault();
+            if (await uploadCoverVariantsBeforeSave()) {
+                // WTForms renders the save control with name="submit", which
+                // shadows comicEditForm.submit. Invoke the native method
+                // directly so the metadata form is submitted after covers.
+                HTMLFormElement.prototype.submit.call(comicEditForm);
+            }
+        });
+    }
+
+    (function initStoredCoversFromServer() {
+        const variants = [
+            {% for cover in comic.list_cover_summaries() %}
+            {
+                id: {{ cover.id|tojson }},
+                blob_data: null,
+                mime_type: {{ (cover.mime_type or 'image/jpeg')|tojson }},
+                label: {{ cover.label|tojson }},
+                preview_url: {% if cover.is_primary %}{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=cover.version)|tojson }}{% else %}{{ url_for('comics.serve_cover_variant_thumbnail', id=comic.id, cover_id=cover.id, v=cover.version)|tojson }}{% endif %}
+            }{% if not loop.last %},{% endif %}
+            {% endfor %}
+        ];
+
+        if (!variants.length) {
+            return;
+        }
+
+        setStoredCoverVariants(variants, false);
+    })();
+    {% endif %}
+
+    // Cover barcode scan (edit form)
+    (function () {
+        const btn = document.getElementById('scanCoverBarcodeBtn');
+        const status = document.getElementById('scanCoverBarcodeStatus');
+        const upcInput = document.getElementById('comicUPC');
+        if (!btn || !upcInput || !window.ComicEnrich) return;
+
+        function setStatus(message, kind) {
+            if (!status) return;
+            status.classList.remove('d-none', 'text-success', 'text-danger', 'text-muted', 'text-warning');
+            status.classList.add(kind || 'text-muted');
+            status.textContent = message;
+        }
+
+        btn.addEventListener('click', async function () {
+            btn.disabled = true;
+            setStatus('Scanning cover for barcode…', 'text-muted');
+            try {
+                const result = await window.ComicEnrich.scanBarcode(btn.dataset.comicId);
+                if (result.cancelled) {
+                    setStatus(result.error, 'text-warning');
+                    return;
+                }
+                if (!result.ok) {
+                    setStatus(result.error || 'No barcode found.', 'text-danger');
+                    return;
+                }
+                upcInput.value = result.data.upc;
+                btn.dataset.existingUpc = result.data.upc;
+                setStatus(`Filled UPC ${result.data.upc} from cover scan.`, 'text-success');
+            } catch (err) {
+                console.error(err);
+                setStatus('Barcode scan failed. Check that OpenCV/pyzbar are installed.', 'text-danger');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    })();
+});
+</script>

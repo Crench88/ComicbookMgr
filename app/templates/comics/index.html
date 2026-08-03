@@ -12,6 +12,9 @@
         <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
             <i class="bi bi-plus-circle me-1"></i> Add Comic
         </a>
+        <a href="{{ url_for('comics.import_comics') }}" class="btn btn-outline-primary">
+            <i class="bi bi-upload me-1"></i> Import
+        </a>
         <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success">
             <i class="bi bi-download me-1"></i> Export
         </a>
@@ -36,11 +39,15 @@
 
     <div class="filter-panel">
         <form method="GET" action="{{ url_for('comics.index') }}" id="collectionFilterForm">
+            <input type="hidden" name="series" value="{{ selected_series or '' }}">
+            <input type="hidden" name="series_page" value="{{ series_pagination.page if series_pagination else 1 }}">
+            <input type="hidden" name="comic_page" value="1">
             <div class="row g-3">
                 <div class="col-md-4 col-lg-3">
                     <label for="search" class="form-label">Search</label>
                     <input type="text" class="form-control" id="search" name="search"
-                           value="{{ search_query }}" placeholder="Title, series, character…">
+                           value="{{ search_query }}" placeholder="Title, series, writer, artist…"
+                           autocomplete="off">
                 </div>
                 <div class="col-md-4 col-lg-2">
                     <label for="publisher" class="form-label">Publisher</label>
@@ -68,8 +75,27 @@
                            value="{{ genre_filter }}" placeholder="Genre…">
                 </div>
                 <div class="col-md-4 col-lg-2">
+                    <label for="tag" class="form-label">Tag</label>
+                    <select class="form-select" id="tag" name="tag">
+                        <option value="">All Tags</option>
+                        {% for tag in available_tags %}
+                        <option value="{{ tag.name }}" {% if tag.name == tag_filter %}selected{% endif %}>{{ tag.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-2">
+                    <label for="read_status" class="form-label">Read Status</label>
+                    <select class="form-select" id="read_status" name="read_status">
+                        <option value="">All Statuses</option>
+                        <option value="unread" {% if read_status_filter == 'unread' %}selected{% endif %}>Unread</option>
+                        <option value="reading" {% if read_status_filter == 'reading' %}selected{% endif %}>Reading</option>
+                        <option value="read" {% if read_status_filter == 'read' %}selected{% endif %}>Read</option>
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-2">
                     <label for="sort" class="form-label">Sort By</label>
                     <select class="form-select" id="sort" name="sort">
+                        <option value="issue_number" {% if sort_by == 'issue_number' %}selected{% endif %}>Issue Number (1 → highest)</option>
                         <option value="title" {% if sort_by == 'title' %}selected{% endif %}>Title</option>
                         <option value="publisher" {% if sort_by == 'publisher' %}selected{% endif %}>Publisher</option>
                         <option value="condition" {% if sort_by == 'condition' %}selected{% endif %}>Condition</option>
@@ -108,7 +134,7 @@
         <ul class="series-list" role="listbox" aria-label="Series list">
             {% for row in series_rows %}
             <li>
-                <a href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=row.name, series_page=series_pagination.page, comic_page=1) }}"
+                <a href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, tag=tag_filter or None, read_status=read_status_filter or None, sort=sort_by, series=row.name, series_page=series_pagination.page, comic_page=1) }}"
                    class="series-list-item{% if row.name == selected_series %} is-active{% endif %}"
                    data-series="{{ row.name|e }}"
                    role="option"
@@ -123,17 +149,17 @@
         <nav class="series-pagination" aria-label="Series pages">
             <ul class="pagination pagination-sm mb-0 justify-content-center">
                 <li class="page-item{% if not series_pagination.has_prev %} disabled{% endif %}">
-                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.prev_num or 1, comic_page=1) }}">
+                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, tag=tag_filter or None, read_status=read_status_filter or None, sort=sort_by, series=selected_series, series_page=series_pagination.prev_num or 1, comic_page=1) }}">
                         <i class="bi bi-chevron-left"></i>
                     </a>
                 </li>
                 {% for p in series_pagination.iter_pages() %}
                 <li class="page-item{% if p == series_pagination.page %} active{% endif %}">
-                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=p, comic_page=1) }}">{{ p }}</a>
+                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, tag=tag_filter or None, read_status=read_status_filter or None, sort=sort_by, series=selected_series, series_page=p, comic_page=1) }}">{{ p }}</a>
                 </li>
                 {% endfor %}
                 <li class="page-item{% if not series_pagination.has_next %} disabled{% endif %}">
-                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.next_num or series_pagination.pages, comic_page=1) }}">
+                    <a class="page-link" href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, tag=tag_filter or None, read_status=read_status_filter or None, sort=sort_by, series=selected_series, series_page=series_pagination.next_num or series_pagination.pages, comic_page=1) }}">
                         <i class="bi bi-chevron-right"></i>
                     </a>
                 </li>
@@ -165,11 +191,12 @@
                      data-condition="{{ (comic.condition or '')|e }}"
                      data-value="{{ comic.get_formatted_value() if comic.estimated_value else '' }}"
                      data-wishlist="{{ 'true' if comic.is_wishlist else 'false' }}"
-                     data-cover-url="{% if comic.has_cover_image() %}{{ url_for('comics.serve_cover_image', id=comic.id) }}{% endif %}">
+                     data-ownership="{{ comic.ownership_status_tags()|map(attribute='label')|join(', ')|e }}"
+                     data-cover-url="{% if comic.has_cover_image() %}{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=comic.cover_version()) }}{% endif %}">
                 <a href="{{ url_for('comics.show', id=comic.id, next=request.full_path) }}" class="cover-card-link">
                     <div class="cover-card-image">
                         {% if comic.has_cover_image() %}
-                        <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}"
+                        <img src="{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=comic.cover_version()) }}"
                              alt="#{{ comic.issue_number }}{% if comic.title %} — {{ comic.title }}{% endif %}"
                              loading="lazy">
                         {% else %}
@@ -177,9 +204,14 @@
                             <i class="bi bi-image"></i>
                         </div>
                         {% endif %}
-                        {% if comic.is_wishlist %}
-                        <span class="cover-card-badge wishlist">Wishlist</span>
+                        {% if comic.read_status and comic.read_status != 'unread' %}
+                        <span class="cover-card-badge">{{ comic.read_status_label }}</span>
                         {% endif %}
+                        {% for tag in comic.ownership_status_tags() %}
+                        {% if tag.key != 'collection' %}
+                        <span class="cover-card-badge {% if tag.key == 'wishlist' %}wishlist{% endif %}">{{ tag.label }}</span>
+                        {% endif %}
+                        {% endfor %}
                         {% if comic.duplicate_total and comic.duplicate_total > 1 %}
                         <span class="cover-card-badge duplicate">Copy {{ comic.duplicate_index }}/{{ comic.duplicate_total }}</span>
                         {% endif %}
@@ -214,19 +246,19 @@
             <ul class="pagination pagination-sm mb-0 justify-content-center">
                 <li class="page-item{% if not comics_pagination.has_prev %} disabled{% endif %}">
                     <a class="page-link comic-page-link" data-page="{{ comics_pagination.prev_num or 1 }}"
-                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=comics_pagination.prev_num or 1) }}">
+                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, tag=tag_filter or None, read_status=read_status_filter or None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=comics_pagination.prev_num or 1) }}">
                         <i class="bi bi-chevron-left"></i>
                     </a>
                 </li>
                 {% for p in comics_pagination.iter_pages() %}
                 <li class="page-item{% if p == comics_pagination.page %} active{% endif %}">
                     <a class="page-link comic-page-link" data-page="{{ p }}"
-                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=p) }}">{{ p }}</a>
+                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, tag=tag_filter or None, read_status=read_status_filter or None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=p) }}">{{ p }}</a>
                 </li>
                 {% endfor %}
                 <li class="page-item{% if not comics_pagination.has_next %} disabled{% endif %}">
                     <a class="page-link comic-page-link" data-page="{{ comics_pagination.next_num or comics_pagination.pages }}"
-                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=comics_pagination.next_num or comics_pagination.pages) }}">
+                       href="{{ url_for('comics.index', search=search_query, publisher=publisher_filter, condition=condition_filter, genre=genre_filter, wishlist=1 if wishlist_only else None, tag=tag_filter or None, read_status=read_status_filter or None, sort=sort_by, series=selected_series, series_page=series_pagination.page, comic_page=comics_pagination.next_num or comics_pagination.pages) }}">
                         <i class="bi bi-chevron-right"></i>
                     </a>
                 </li>
@@ -241,7 +273,7 @@
     <i class="bi bi-collection"></i>
     <h3>No comics found</h3>
     <p class="text-muted">
-        {% if search_query or publisher_filter or condition_filter or genre_filter or wishlist_only %}
+        {% if search_query or publisher_filter or condition_filter or genre_filter or tag_filter or read_status_filter or wishlist_only %}
             Try adjusting your filters or <a href="{{ url_for('comics.index') }}">clear all filters</a>.
         {% else %}
             You haven't added any comics to your collection yet.
@@ -286,4 +318,65 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/awesomplete@1.1.5/awesomplete.css">
+<style>
+.awesomplete { display: block; width: 100%; }
+.awesomplete ul { z-index: 1050; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/awesomplete@1.1.5/awesomplete.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const input = document.getElementById('search');
+    if (!input || typeof Awesomplete === 'undefined') return;
+
+    const completer = new Awesomplete(input, {
+        minChars: 3,
+        maxItems: 12,
+        autoFirst: true,
+        filter: function () { return true; },
+        sort: false,
+    });
+
+    let timer = null;
+    let lastQuery = '';
+
+    input.addEventListener('input', function () {
+        const query = input.value.trim();
+        if (query.length < 3) {
+            completer.list = [];
+            return;
+        }
+        clearTimeout(timer);
+        timer = setTimeout(async function () {
+            if (query === lastQuery) return;
+            lastQuery = query;
+            try {
+                const response = await fetch(`/comics/autocomplete?q=${encodeURIComponent(query)}`);
+                if (!response.ok) return;
+                const data = await response.json();
+                completer.list = (data.suggestions || []).map(function (item) {
+                    return item.label + ' (' + item.type + ')';
+                });
+                if (document.activeElement === input) {
+                    completer.evaluate();
+                }
+            } catch (err) {
+                console.warn('Autocomplete failed', err);
+            }
+        }, 200);
+    });
+
+    input.addEventListener('awesomplete-selectcomplete', function (event) {
+        const label = String(event.text || input.value);
+        const cleaned = label.replace(/\s+\((series|title|writer|artist)\)$/i, '');
+        input.value = cleaned;
+    });
+});
+</script>
 {% endblock %}

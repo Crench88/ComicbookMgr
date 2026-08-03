@@ -86,12 +86,10 @@ def sanitize_for_json(results: list) -> list:
             'issue_number': issue.get('issue_number', ''),
             'publisher': issue.get('publisher', ''),
             'characters': issue.get('characters', ''),
-            'writer': issue.get('writer', ''),
-            'artist': issue.get('artist', ''),
-            'colorist': issue.get('colorist', ''),
-            'letterer': issue.get('letterer', ''),
-            'editor': issue.get('editor', ''),
-            'cover_artist': issue.get('cover_artist', ''),
+            **{
+                field: issue.get(field, '')
+                for field in comicvine.CREDIT_FIELD_NAMES
+            },
             'teams': issue.get('teams', ''),
             'story_arc': issue.get('story_arc', ''),
             'writers': issue.get('writers', []),
@@ -106,7 +104,6 @@ def sanitize_for_json(results: list) -> list:
             'volume': issue.get('volume', ''),
             'volume_start_year': issue.get('volume_start_year', ''),
             'upc': issue.get('upc', ''),
-            'isbn': issue.get('isbn', ''),
             'source': issue.get('source', 'Unknown'),
             'has_variants_endpoint': bool(issue.get('has_variants_endpoint')),
             'series_id': issue.get('series_id'),
@@ -126,9 +123,8 @@ def run_comic_search(*, query='', series_name='', issue_number='',
     all_results = []
 
     if upc:
-        if comicvine_api_key:
-            cv_upc = comicvine.search_comicvine_by_upc(upc, comicvine_api_key)
-            all_results.extend(cv_upc)
+        # ComicVine has no barcode data, so a UPC only goes to the barcode APIs.
+        # When they come up empty we fall through to the normal search below.
         barcode_results = barcode.search_barcode(upc, upc_api_key, barcode_api_key)
         all_results.extend(barcode_results)
         if all_results:

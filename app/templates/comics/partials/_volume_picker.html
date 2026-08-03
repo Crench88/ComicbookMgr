@@ -1,0 +1,57 @@
+{% macro series_volume_picker() %}
+                        <div id="volumePicker" class="volume-picker border rounded p-3 mb-3">
+                            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                <div>
+                                    <h6 class="mb-1"><i class="bi bi-journals"></i> Choose Series Volume</h6>
+                                    <p class="text-muted small mb-0">
+                                        Many series have multiple volumes across different years (e.g. Batman 1940, Batman 2011).
+                                        Browse volumes first, then search for a specific issue within that run.
+                                        ComicVine results default to major North American publishers (Marvel, DC, Image, etc.).
+                                    </p>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="clearVolumeBtn">
+                                    Clear
+                                </button>
+                            </div>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-4">
+                                    <label for="volumeSeriesQuery" class="form-label">Series Name</label>
+                                    <input type="text" class="form-control" id="volumeSeriesQuery"
+                                           placeholder="e.g. Amazing Spider-Man, Batman" list="seriesOptions">
+                                </div>
+                                <div class="col-md-2">
+                                    <label for="volumeYearFilter" class="form-label">Start Year</label>
+                                    <input type="number" class="form-control" id="volumeYearFilter"
+                                           placeholder="e.g. 1963" min="1900" max="2099">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="volumePublisherFilter" class="form-label">Publisher</label>
+                                    <input type="text" class="form-control" id="volumePublisherFilter"
+                                           placeholder="e.g. Marvel, DC Comics">
+                                </div>
+                                <div class="col-md-3">
+                                    <button type="button" class="btn btn-outline-primary w-100" id="browseVolumesBtn">
+                                        <i class="bi bi-list-ul"></i> Browse Volumes
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" id="naPublishersOnly" checked>
+                                <label class="form-check-label small" for="naPublishersOnly">
+                                    North American publishers only (excludes Panini, foreign editions, etc.)
+                                </label>
+                            </div>
+                            <div id="selectedVolumeChip" class="alert alert-success py-2 px-3 mt-3 mb-0 d-none"></div>
+                            <div id="volumeListPanel" class="d-none mt-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span class="small text-muted" id="volumeListMeta"></span>
+                                </div>
+                                <div id="volumeList" class="list-group volume-list"></div>
+                            </div>
+                            <div id="volumeBrowseError" class="alert alert-warning mt-3 mb-0 d-none"></div>
+                            <div id="volumeBrowseLoading" class="text-center py-3 d-none">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                                <span class="ms-2">Loading volumes...</span>
+                            </div>
+                        </div>
+{% endmacro %}

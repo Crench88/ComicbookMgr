@@ -83,6 +83,48 @@
     </div>
 </div>
 
+{% if continue_reading %}
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-book-half text-success"></i>
+        <span>Continue Reading</span>
+    </div>
+    <div class="card-body">
+        <div class="comic-grid">
+            {% for comic, current_page, total_pages in continue_reading %}
+            <article class="comic-card">
+                <div class="comic-card-cover">
+                    {% if comic.has_cover_image() %}
+                    <img src="{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=comic.cover_version()) }}"
+                         alt="{{ comic.title }} cover">
+                    {% else %}
+                    <i class="bi bi-image text-muted" style="font-size: 2.5rem;"></i>
+                    {% endif %}
+                </div>
+                <div class="comic-card-body">
+                    <h6 class="comic-card-title">{{ comic.title }} #{{ comic.issue_number }}</h6>
+                    <p class="text-muted small mb-2">Page {{ current_page }} of {{ total_pages }}</p>
+                    <div class="progress" style="height: 6px;">
+                        <div class="progress-bar bg-success"
+                             role="progressbar"
+                             style="width: {{ (current_page / total_pages * 100)|round(0, 'floor') }}%"
+                             aria-valuenow="{{ current_page }}"
+                             aria-valuemin="1"
+                             aria-valuemax="{{ total_pages }}"></div>
+                    </div>
+                </div>
+                <div class="card-footer border-0 pt-0 pb-3 px-3">
+                    <a href="{{ url_for('reader.read', comic_id=comic.id) }}" class="btn btn-sm btn-success w-100">
+                        <i class="bi bi-play-fill"></i> Resume
+                    </a>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-2">
@@ -98,7 +140,7 @@
             <article class="comic-card">
                 <div class="comic-card-cover">
                     {% if comic.has_cover_image() %}
-                    <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}"
+                    <img src="{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=comic.cover_version()) }}"
                          alt="{{ comic.title }} cover">
                     {% else %}
                     <i class="bi bi-image text-muted" style="font-size: 2.5rem;"></i>

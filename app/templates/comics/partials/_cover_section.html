@@ -1,0 +1,26 @@
+                    <!-- Cover Image -->
+                    <div class="mb-3">
+                        {{ form.cover_image.label(class="form-label") }}
+                        {{ form.cover_image(class="form-control" + (" is-invalid" if form.cover_image.errors else "")) }}
+                        {% if form.cover_image.errors %}
+                            <div class="invalid-feedback">
+                                {% for error in form.cover_image.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">Upload a cover image (JPG, PNG, GIF - max 16MB)</div>
+                        <button type="button" class="btn btn-outline-primary mt-2" id="fetchCoverBtn">
+                            <i class="bi bi-images"></i> Add Covers from ComicVine
+                        </button>
+                        <div id="coverSearchStatus" class="d-none mt-2"></div>
+                        <div id="fetchedCoverPreview" class="mt-2"></div>
+
+                        <div id="storedCoversSection" class="stored-covers-section mt-3 d-none">
+                            <h6 class="mb-1"><i class="bi bi-images"></i> Cover Variants</h6>
+                            <p class="text-muted small mb-2">
+                                All stored covers for this issue. Click <strong>Set as Primary</strong> to change the main cover, then save the comic.
+                            </p>
+                            <div id="storedCoversGallery" class="stored-covers-gallery"></div>
+                        </div>
+                    </div>

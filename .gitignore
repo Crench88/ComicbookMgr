@@ -143,9 +143,9 @@ instance/
 *.pem
 secrets/
 
-# Test and development files
-test_*.py
-*_test.py
+# Root-level ad-hoc test scripts (keep the pytest suite under tests/)
+/test_*.py
+/*_test.py
 debug_*.py
 temp_*.py
 *.tmp
@@ -182,3 +182,12 @@ instance/uploads/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Extracted comic cover images
+instance/covers/
+
+# Digital comic archives (CBZ)
+instance/digital/
+
+# Extracted reader page cache
+instance/reader_cache/

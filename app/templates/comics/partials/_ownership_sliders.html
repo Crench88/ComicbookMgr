@@ -1,0 +1,47 @@
+{# Shared In Collection / Digital ownership toggles #}
+{% macro ownership_sliders(in_collection_id='comicInCollection', digital_id='comicIsDigital',
+                           in_collection_name='in_collection', digital_name='is_digital',
+                           in_collection_checked=True, digital_checked=False,
+                           form_fields=None, compact=False) %}
+<div class="ownership-sliders {% if compact %}ownership-sliders--compact{% endif %}">
+    <div class="form-check form-switch mb-2">
+        {% if form_fields %}
+            {{ form_fields.in_collection(class="form-check-input", id=in_collection_id, role="switch") }}
+            <label class="form-check-label" for="{{ in_collection_id }}">In Collection</label>
+        {% else %}
+            <input class="form-check-input" type="checkbox" role="switch"
+                   id="{{ in_collection_id }}" name="{{ in_collection_name }}"
+                   {% if in_collection_checked %}checked{% endif %}>
+            <label class="form-check-label" for="{{ in_collection_id }}">In Collection</label>
+        {% endif %}
+    </div>
+    <div class="form-check form-switch mb-0">
+        {% if form_fields %}
+            {{ form_fields.is_digital(class="form-check-input", id=digital_id, role="switch") }}
+            <label class="form-check-label" for="{{ digital_id }}">Digital</label>
+        {% else %}
+            <input class="form-check-input" type="checkbox" role="switch"
+                   id="{{ digital_id }}" name="{{ digital_name }}"
+                   {% if digital_checked %}checked{% endif %}>
+            <label class="form-check-label" for="{{ digital_id }}">Digital</label>
+        {% endif %}
+    </div>
+    {% if not compact %}
+    <div class="form-text mt-2 mb-0">
+        In Collection only → <span class="badge bg-success">In Collection</span>.
+        Both on (or a digital file) → <span class="badge bg-success">In Collection</span>
+        <span class="badge bg-info text-dark">Digital</span>.
+        Digital only → <span class="badge bg-primary">Digital only</span>.
+        Both off → <span class="badge bg-warning text-dark">Wishlist</span>.
+    </div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+{% macro ownership_status_badges(comic) %}
+<div class="d-flex flex-wrap gap-1" id="comicOwnershipBadges">
+    {% for tag in comic.ownership_status_tags() %}
+    <span class="badge {{ tag.class }}">{{ tag.label }}</span>
+    {% endfor %}
+</div>
+{% endmacro %}

@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% block title %}{% endblock %} - Comic Book Collection Manager</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="any">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
 
     <script>
     (function() {
@@ -54,14 +58,20 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('comics.wishlist') }}">Wishlist</a>
                     </li>
+                    {% if current_user.is_admin %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" id="comicAdminMenu" role="button"
                            data-bs-toggle="dropdown" aria-expanded="false">Comic Admin</a>
                         <ul class="dropdown-menu" aria-labelledby="comicAdminMenu">
                             <li><a class="dropdown-item" href="{{ url_for('admin.series_index') }}">Series List</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin.series_issues') }}">Series Issues</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('admin.manage_roles') }}">
+                                <i class="bi bi-shield-lock me-1"></i>Manage Roles
+                            </a></li>
                         </ul>
                     </li>
+                    {% endif %}
                     {% endif %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('main.about') }}">About</a>
@@ -82,6 +92,9 @@
                             </a></li>
                             <li><a class="dropdown-item" href="{{ url_for('comics.export') }}">
                                 <i class="bi bi-download me-2"></i>Export Collection
+                            </a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('comics.import_comics') }}">
+                                <i class="bi bi-upload me-2"></i>Import Collection
                             </a></li>
                             <li><a class="dropdown-item" href="{{ url_for('dashboard.profile') }}">
                                 <i class="bi bi-gear me-2"></i>Profile &amp; Settings

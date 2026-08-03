@@ -1303,6 +1303,49 @@ a:hover {
     background: var(--text-muted);
 }
 
+/* Comic detail page: details panel scrolls to match the cover/digital card */
+@media (min-width: 768px) {
+    .comic-show-details-card {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .comic-show-details-card > .card-header {
+        flex: 0 0 auto;
+    }
+
+    .comic-show-details-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+}
+
+.comic-cover-read-link {
+    cursor: pointer;
+}
+
+.comic-cover-read-link:hover .card-img-top,
+.comic-cover-read-link:focus-visible .card-img-top {
+    opacity: 0.92;
+}
+
+.comic-cover-read-link:focus-visible {
+    outline: 2px solid var(--bs-primary, #0d6efd);
+    outline-offset: 2px;
+}
+
+.comic-cover-variant-clickable .cover-variant-thumb {
+    transition: outline-color 0.15s ease, transform 0.15s ease;
+}
+
+.comic-cover-variant-clickable:hover .cover-variant-thumb {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
 /* ── Responsive ── */
 @media (max-width: 768px) {
     .app-shell {

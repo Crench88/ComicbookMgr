@@ -3,9 +3,10 @@ Database models for Comic Book Collection Manager.
 Defines User and Comic models with their relationships and methods.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
+from sqlalchemy.orm import query_expression
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # Import db from app module
@@ -14,6 +15,12 @@ try:
 except ImportError:
     # For testing purposes, create a mock db
     db = SQLAlchemy()
+
+
+def utcnow():
+    """Current UTC time as a naive value for existing DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 class User(UserMixin, db.Model):
     """
@@ -24,7 +31,7 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
     is_active = db.Column(db.Boolean, default=True)
     is_admin = db.Column(db.Boolean, default=False, nullable=False)
     dark_mode_preference = db.Column(db.Boolean, default=False)  # Legacy; synced from preferred_theme
@@ -63,17 +70,17 @@ class User(UserMixin, db.Model):
     def generate_reset_token(self):
         """Generate a password reset token."""
         import secrets
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         
         self.reset_token = secrets.token_urlsafe(32)
-        self.reset_token_expires = datetime.utcnow() + timedelta(hours=1)  # Token expires in 1 hour
+        self.reset_token_expires = utcnow() + timedelta(hours=1)  # Token expires in 1 hour
         return self.reset_token
     
     def is_reset_token_valid(self, token):
         """Check if the reset token is valid and not expired."""
         return (self.reset_token == token and 
                 self.reset_token_expires and 
-                self.reset_token_expires > datetime.utcnow())
+                self.reset_token_expires > utcnow())
     
     def clear_reset_token(self):
         """Clear the reset token after successful password reset."""
@@ -99,9 +106,10 @@ class Series(db.Model):
     date_range = db.Column(db.String(200))
     notes = db.Column(db.Text)
     comicvine_volume_id = db.Column(db.Integer, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     issues = db.relationship('SeriesIssue', backref='series', cascade='all, delete-orphan', lazy=True)
+    owned_comics = db.relationship('Comic', back_populates='catalog_series', lazy='dynamic')
 
     @property
     def display_name(self):
@@ -135,8 +143,8 @@ class SeriesIssue(db.Model):
     artist = db.Column(db.String(200))
     story_arc = db.Column(db.String(200))
     comicvine_issue_id = db.Column(db.Integer, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     def __repr__(self):
         return f"<SeriesIssue {self.issue_number} - {self.title or ''}>"
@@ -156,6 +164,30 @@ class SeriesIssue(db.Model):
         return (float('inf'), issue.lower())
 
 
+
+comic_tags = db.Table(
+    'comic_tags',
+    db.Column('comic_id', db.Integer, db.ForeignKey('comic.id'), primary_key=True),
+    db.Column('tag_id', db.Integer, db.ForeignKey('tag.id'), primary_key=True),
+)
+
+
+class Tag(db.Model):
+    """Per-user tag used to organize owned comics."""
+    __tablename__ = 'tag'
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'name', name='uq_tag_user_name'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    name = db.Column(db.String(80), nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    def __repr__(self):
+        return f'<Tag {self.name}>'
+
+
 class Comic(db.Model):
     """
     Comic model for storing comic book information.
@@ -163,17 +195,25 @@ class Comic(db.Model):
     """
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)  # Full display title (e.g., "The Amazing Spider-Man: Worldwide #1")
-    series = db.Column(db.String(200))  # Series name (e.g., "The Amazing Spider-Man")
+    series = db.Column(db.String(200))  # Free-text series label (kept for grouping / unmatched comics)
+    series_id = db.Column(db.Integer, db.ForeignKey('series.id'), nullable=True, index=True)
     issue_title = db.Column(db.String(200))  # Individual issue title (e.g., "Worldwide")
     issue_number = db.Column(db.String(20), nullable=False)
     publisher = db.Column(db.String(100), nullable=False)
     characters = db.Column(db.Text)  # Comma-separated list of characters
     writer = db.Column(db.Text)
     artist = db.Column(db.Text)
+    penciler = db.Column(db.String(500))
+    inker = db.Column(db.String(500))
     colorist = db.Column(db.String(500))
     letterer = db.Column(db.String(500))
     editor = db.Column(db.String(500))
+    assistant_editor = db.Column(db.String(500))
     cover_artist = db.Column(db.String(500))
+    designer = db.Column(db.String(500))
+    production = db.Column(db.String(500))
+    translator = db.Column(db.String(500))
+    other_credits = db.Column(db.String(500))
     teams = db.Column(db.Text)
     story_arc = db.Column(db.String(500))
     description = db.Column(db.Text)  # ComicVine synopsis / deck
@@ -182,21 +222,32 @@ class Comic(db.Model):
     genre = db.Column(db.String(100))
     release_date = db.Column(db.Date)
     upc = db.Column(db.String(20))  # Universal Product Code (12 digits)
-    isbn = db.Column(db.String(20))  # International Standard Book Number (13 digits)
     condition = db.Column(db.String(50))  # Mint, Near Mint, Very Fine, Fine, Good, etc.
     estimated_value = db.Column(db.Float, default=0.0)
     notes = db.Column(db.Text)
-    cover_image = db.Column(db.LargeBinary)  # BLOB storage for primary cover image
+    cover_image = db.Column(db.LargeBinary)  # Legacy BLOB; dual-read with cover_image_path
+    cover_image_path = db.Column(db.String(500))  # Relative path under instance/covers
     cover_image_mime = db.Column(db.String(100))  # MIME type of the image
+    cover_available = query_expression()
     # Retained for migration compatibility. New alternate covers live in
     # ComicCover rows so adding a variant does not rewrite one large JSON blob.
     additional_covers = db.Column(db.Text)
     is_wishlist = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    in_collection = db.Column(db.Boolean, nullable=False, default=True)
+    is_digital = db.Column(db.Boolean, nullable=False, default=False)
+    read_status = db.Column(db.String(20), nullable=False, default='unread', index=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     # Foreign key to user
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    catalog_series = db.relationship('Series', back_populates='owned_comics')
+    tags = db.relationship(
+        'Tag',
+        secondary=comic_tags,
+        lazy='select',
+        backref=db.backref('comics', lazy='dynamic'),
+    )
     cover_variants = db.relationship(
         'ComicCover',
         backref='comic',
@@ -204,6 +255,64 @@ class Comic(db.Model):
         cascade='all, delete-orphan',
         order_by='ComicCover.position',
     )
+    digital_file = db.relationship(
+        'ComicFile',
+        backref='comic',
+        lazy='select',
+        uselist=False,
+        cascade='all, delete-orphan',
+    )
+
+    READ_STATUS_CHOICES = ('unread', 'reading', 'read')
+
+    # Every creator column, in the order ComicVine lists credits. Kept in one
+    # place so forms, pages, and importers cannot drift out of sync.
+    CREDIT_FIELDS = (
+        ('writer', 'Writer'),
+        ('artist', 'Artist'),
+        ('penciler', 'Penciler'),
+        ('inker', 'Inker'),
+        ('colorist', 'Colorist'),
+        ('letterer', 'Letterer'),
+        ('cover_artist', 'Cover Artist'),
+        ('editor', 'Editor'),
+        ('assistant_editor', 'Assistant Editor'),
+        ('designer', 'Designer'),
+        ('production', 'Production'),
+        ('translator', 'Translator'),
+        ('other_credits', 'Other'),
+    )
+
+    def credits(self):
+        """Non-empty (label, names) pairs for display."""
+        return [
+            (label, getattr(self, field))
+            for field, label in self.CREDIT_FIELDS
+            if (getattr(self, field) or '').strip()
+        ]
+
+    @property
+    def read_status_label(self):
+        status = (self.read_status or 'unread').lower()
+        return {
+            'unread': 'Unread',
+            'reading': 'Reading',
+            'read': 'Read',
+        }.get(status, 'Unread')
+
+    def get_tags_text(self):
+        """Comma-separated tag names for forms."""
+        names = sorted({tag.name for tag in self.tags if tag.name}, key=str.lower)
+        return ', '.join(names)
+
+    @property
+    def series_label(self):
+        """Canonical series label for UI grouping and return URLs."""
+        if self.catalog_series is not None:
+            return self.catalog_series.display_name
+        if self.series and str(self.series).strip():
+            return str(self.series).strip()
+        return 'Unknown Series'
     
     def get_characters_list(self):
         """Return characters as a list."""
@@ -231,19 +340,30 @@ class Comic(db.Model):
     def get_additional_covers(self):
         """Return alternate covers as Base64 dictionaries for the UI."""
         import base64
-        return [{
-            'id': cover.id,
-            'blob_data': base64.b64encode(cover.image_data).decode('utf-8'),
-            'mime_type': cover.mime_type or 'image/jpeg',
-            'label': cover.label or 'Cover',
-            'is_primary': False,
-        } for cover in self.cover_variants]
+        from .services.cover_storage import get_variant_cover_bytes
+
+        covers = []
+        for cover in self.cover_variants:
+            image_data = get_variant_cover_bytes(cover)
+            if not image_data:
+                continue
+            covers.append({
+                'id': cover.id,
+                'blob_data': base64.b64encode(image_data).decode('utf-8'),
+                'mime_type': cover.mime_type or 'image/jpeg',
+                'label': cover.label or 'Cover',
+                'is_primary': False,
+            })
+        return covers
 
     def set_additional_covers(self, covers_list):
         """Replace alternate cover rows from Base64 dictionaries."""
         import base64
         import binascii
+        from .services.cover_storage import clear_variant_cover, persist_variant_cover
 
+        for existing in list(self.cover_variants):
+            clear_variant_cover(existing)
         self.cover_variants.clear()
         # Flush deletions before reusing positions. This matters on SQLite,
         # where inserting a replacement at position 1 can otherwise conflict
@@ -256,23 +376,34 @@ class Comic(db.Model):
             except (ValueError, TypeError, binascii.Error):
                 continue
             if image_data:
-                self.cover_variants.append(ComicCover(
+                variant = ComicCover(
                     image_data=image_data,
                     mime_type=(cover.get('mime_type') or 'image/jpeg')[:100],
                     label=(cover.get('label') or f'Cover {position}')[:200],
                     position=position,
-                ))
+                )
+                self.cover_variants.append(variant)
+                if self.id is not None:
+                    persist_variant_cover(
+                        variant,
+                        image_data,
+                        variant.mime_type,
+                        user_id=self.user_id,
+                        comic_id=self.id,
+                    )
         self.additional_covers = None
 
     def get_all_covers(self):
-        """Return all covers including the primary cover with BLOB data."""
+        """Return all covers including the primary cover with image bytes."""
+        import base64
+        from .services.cover_storage import get_primary_cover_bytes
+
         covers = []
-        if self.cover_image:
-            import base64
-            blob_base64 = base64.b64encode(self.cover_image).decode('utf-8')
+        primary = get_primary_cover_bytes(self)
+        if primary:
             covers.append({
                 'id': None,
-                'blob_data': blob_base64,
+                'blob_data': base64.b64encode(primary).decode('utf-8'),
                 'mime_type': self.cover_image_mime or 'image/jpeg',
                 'label': 'Primary Cover',
                 'is_primary': True,
@@ -281,79 +412,164 @@ class Comic(db.Model):
         covers.extend(self.get_additional_covers())
         return covers
 
+    def cover_version(self):
+        """Cache-busting token for this comic's primary cover URL."""
+        from .services.cover_storage import cover_version
+
+        token = cover_version(self.cover_image_path) if self.cover_image_path else None
+        if token:
+            return token
+        # Legacy BLOB-only rows: avoid loading the image just to version it.
+        stamp = self.updated_at or self.created_at
+        return str(int(stamp.timestamp())) if stamp else None
+
     def list_cover_summaries(self):
         """Lightweight cover metadata for templates (no Base64 payloads)."""
         covers = []
-        if self.cover_image:
+        if self.cover_image_path or self.cover_image:
             covers.append({
                 'id': None,
                 'is_primary': True,
                 'label': 'Primary Cover',
                 'mime_type': self.cover_image_mime or 'image/jpeg',
+                'version': self.cover_version(),
             })
         for cover in self.cover_variants:
+            if not (cover.image_path or cover.image_data):
+                continue
             covers.append({
                 'id': cover.id,
                 'is_primary': False,
                 'label': cover.label or 'Cover',
                 'mime_type': cover.mime_type or 'image/jpeg',
+                'version': cover.image_version(),
             })
         return covers
 
     def set_primary_cover_variant(self, cover_id):
         """Promote an alternate cover row to the primary cover image."""
+        from .services.cover_storage import (
+            clear_variant_cover,
+            get_primary_cover_bytes,
+            get_variant_cover_bytes,
+            persist_primary_cover,
+            persist_variant_cover,
+        )
+
         variant = next((c for c in self.cover_variants if c.id == cover_id), None)
         if variant is None:
             return False
 
-        old_primary_data = self.cover_image
+        old_primary_data = get_primary_cover_bytes(self)
         old_primary_mime = self.cover_image_mime or 'image/jpeg'
-        old_primary_label = 'Primary Cover'
+        # Primary covers carry no label of their own, so the demoted image needs
+        # one that will not read as a second "Primary Cover" in the gallery.
+        old_primary_label = 'Previous Primary Cover'
 
-        new_primary_data = variant.image_data
+        new_primary_data = get_variant_cover_bytes(variant)
         new_primary_mime = variant.mime_type or 'image/jpeg'
+        if not new_primary_data:
+            return False
 
-        remaining = [
-            {
-                'image_data': cover.image_data,
+        remaining = []
+        for cover in self.cover_variants:
+            if cover.id == cover_id:
+                continue
+            data = get_variant_cover_bytes(cover)
+            if not data:
+                continue
+            remaining.append({
+                'image_data': data,
                 'mime_type': cover.mime_type or 'image/jpeg',
                 'label': cover.label or 'Cover',
-            }
-            for cover in self.cover_variants
-            if cover.id != cover_id
-        ]
+            })
 
-        self.cover_image = new_primary_data
-        self.cover_image_mime = new_primary_mime
+        for existing in list(self.cover_variants):
+            clear_variant_cover(existing)
         self.cover_variants.clear()
         if self.id is not None:
             db.session.flush()
 
+        persist_primary_cover(self, new_primary_data, new_primary_mime)
+
         position = 1
         if old_primary_data:
-            self.cover_variants.append(ComicCover(
+            demoted = ComicCover(
                 image_data=old_primary_data,
                 mime_type=old_primary_mime,
                 label=old_primary_label,
                 position=position,
-            ))
+            )
+            self.cover_variants.append(demoted)
+            persist_variant_cover(
+                demoted,
+                old_primary_data,
+                old_primary_mime,
+                user_id=self.user_id,
+                comic_id=self.id,
+            )
             position += 1
 
         for cover in remaining:
-            self.cover_variants.append(ComicCover(
+            variant_row = ComicCover(
                 image_data=cover['image_data'],
                 mime_type=cover['mime_type'],
                 label=cover['label'],
                 position=position,
-            ))
+            )
+            self.cover_variants.append(variant_row)
+            persist_variant_cover(
+                variant_row,
+                cover['image_data'],
+                cover['mime_type'],
+                user_id=self.user_id,
+                comic_id=self.id,
+            )
             position += 1
 
         self.additional_covers = None
         return True
 
     def has_cover_image(self):
-        """Check if comic has a cover image."""
-        return self.cover_image is not None
+        """Check if comic has a cover image on disk or as a legacy BLOB."""
+        if self.cover_available is not None:
+            return bool(self.cover_available)
+        return bool(self.cover_image_path or self.cover_image)
+
+    def has_digital_file(self):
+        """True when a digital archive is attached."""
+        return self.digital_file is not None
+
+    @property
+    def digital_active(self):
+        """True when marked digital or a digital file is attached."""
+        return bool(self.is_digital or self.has_digital_file())
+
+    def sync_wishlist_flag(self):
+        """Keep legacy wishlist flag aligned with ownership sliders."""
+        self.is_wishlist = (not bool(self.in_collection)) and (not self.digital_active)
+
+    def apply_ownership(self, in_collection=None, is_digital=None):
+        """Update ownership sliders and sync wishlist."""
+        if in_collection is not None:
+            self.in_collection = bool(in_collection)
+        if is_digital is not None:
+            self.is_digital = bool(is_digital)
+        self.sync_wishlist_flag()
+
+    def ownership_status_tags(self):
+        """Badges for collection / digital ownership."""
+        digital = self.digital_active
+        if self.in_collection and digital:
+            return [
+                {'key': 'collection', 'label': 'In Collection', 'class': 'bg-success'},
+                {'key': 'digital', 'label': 'Digital', 'class': 'bg-info text-dark'},
+            ]
+        if self.in_collection:
+            return [{'key': 'collection', 'label': 'In Collection', 'class': 'bg-success'}]
+        if digital:
+            return [{'key': 'digital-only', 'label': 'Digital only', 'class': 'bg-primary'}]
+        return [{'key': 'wishlist', 'label': 'Wishlist', 'class': 'bg-warning text-dark'}]
 
     def __repr__(self):
         return f'<Comic {self.title} #{self.issue_number}>'
@@ -368,8 +584,56 @@ class ComicCover(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     comic_id = db.Column(db.Integer, db.ForeignKey('comic.id'), nullable=False, index=True)
-    image_data = db.Column(db.LargeBinary, nullable=False)
+    image_data = db.Column(db.LargeBinary)  # Legacy BLOB; dual-read with image_path
+    image_path = db.Column(db.String(500))  # Relative path under instance/covers
     mime_type = db.Column(db.String(100), nullable=False, default='image/jpeg')
     label = db.Column(db.String(200), nullable=False, default='Cover')
     position = db.Column(db.Integer, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    def image_version(self):
+        """Cache-busting token for this variant's cover URL."""
+        from .services.cover_storage import cover_version
+
+        return cover_version(self.image_path, self.image_data)
+
+
+class ComicFile(db.Model):
+    """Digital archive (CBZ) attached to a physical comic record."""
+    __tablename__ = 'comic_file'
+    __table_args__ = (
+        db.UniqueConstraint('comic_id', name='uq_comic_file_comic_id'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    comic_id = db.Column(db.Integer, db.ForeignKey('comic.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    storage_path = db.Column(db.String(500), nullable=False)
+    format = db.Column(db.String(20), nullable=False, default='cbz')
+    original_filename = db.Column(db.String(255), nullable=False)
+    page_count = db.Column(db.Integer, nullable=False, default=0)
+    file_size = db.Column(db.Integer, nullable=False, default=0)
+    content_hash = db.Column(db.String(64))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    def __repr__(self):
+        return f'<ComicFile comic={self.comic_id} format={self.format}>'
+
+
+class ReadingProgress(db.Model):
+    """Per-user last-read page for a comic digital file."""
+    __tablename__ = 'reading_progress'
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'comic_id', name='uq_reading_progress_user_comic'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    comic_id = db.Column(db.Integer, db.ForeignKey('comic.id'), nullable=False, index=True)
+    page_number = db.Column(db.Integer, nullable=False, default=1)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    def __repr__(self):
+        return f'<ReadingProgress comic={self.comic_id} page={self.page_number}>'
+

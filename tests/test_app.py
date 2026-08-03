@@ -3,10 +3,22 @@ Unit tests for Comic Book Collection Manager.
 """
 
 import pytest
+from io import BytesIO
 from unittest.mock import patch
+from PIL import Image
 
 from app import create_app, db
 from app.models import User, Comic
+
+
+def _test_png(color):
+    buffer = BytesIO()
+    Image.new('RGB', (2, 2), color).save(buffer, format='PNG')
+    return buffer.getvalue()
+
+
+PRIMARY_COVER_BYTES = _test_png('red')
+ALTERNATE_COVER_BYTES = _test_png('blue')
 
 
 @pytest.fixture
@@ -93,6 +105,31 @@ class TestComics:
         assert response.status_code == 200
         assert b'Comic added successfully' in response.data
 
+    def test_add_comic_saves_and_shows_every_credit(self, client, test_user_id, app):
+        _login_as(client, test_user_id)
+        credits = {
+            field: f'{label} Person' for field, label in Comic.CREDIT_FIELDS
+        }
+        response = client.post('/comics/new', data={
+            'title': 'Credited',
+            'series': 'Credit Test',
+            'issue_number': '7',
+            'publisher': 'Marvel Comics',
+            **credits,
+        }, follow_redirects=True)
+        assert response.status_code == 200
+
+        with app.app_context():
+            comic = Comic.query.filter_by(user_id=test_user_id, issue_number='7').one()
+            for field, label in Comic.CREDIT_FIELDS:
+                assert getattr(comic, field) == f'{label} Person'
+            comic_id = comic.id
+
+        page = client.get(f'/comics/{comic_id}').get_data(as_text=True)
+        for field, label in Comic.CREDIT_FIELDS:
+            assert f'<dt class="col-sm-3">{label}</dt>' in page
+            assert f'{label} Person' in page
+
     def test_view_comics(self, client, test_user_id):
         _login_as(client, test_user_id)
         response = client.get('/comics')
@@ -123,6 +160,67 @@ class TestComics:
         assert response.status_code == 200
         assert b'series=Selected+Series' in response.data
         assert b'series=Different+Series' not in response.data
+
+    def test_series_grid_sorts_in_sql_and_defers_cover_blob(
+            self, client, test_user_id, app):
+        from sqlalchemy import inspect
+        from app.comics.helpers import _comics_for_series_query
+
+        with app.app_context():
+            db.session.add_all([
+                Comic(
+                    title='Zulu',
+                    series='Sorted Series',
+                    issue_number='2',
+                    publisher='Marvel Comics',
+                    user_id=test_user_id,
+                    cover_image=PRIMARY_COVER_BYTES,
+                    cover_image_mime='image/png',
+                ),
+                Comic(
+                    title='Alpha',
+                    series='Sorted Series',
+                    issue_number='1',
+                    publisher='Marvel Comics',
+                    user_id=test_user_id,
+                ),
+                Comic(
+                    title='Beta',
+                    series='Sorted Series',
+                    issue_number='10',
+                    publisher='Marvel Comics',
+                    user_id=test_user_id,
+                ),
+            ])
+            db.session.commit()
+            db.session.expunge_all()
+
+            comics = _comics_for_series_query(
+                test_user_id,
+                'Sorted Series',
+                sort_by='title',
+            ).all()
+            assert [comic.title for comic in comics] == ['Alpha', 'Beta', 'Zulu']
+            zulu = comics[2]
+            assert 'cover_image' in inspect(zulu).unloaded
+            assert zulu.has_cover_image() is True
+            assert 'cover_image' in inspect(zulu).unloaded
+
+            issue_sorted = _comics_for_series_query(
+                test_user_id,
+                'Sorted Series',
+            ).all()
+            assert [comic.issue_number for comic in issue_sorted] == ['1', '2', '10']
+
+        _login_as(client, test_user_id)
+        response = client.get(
+            '/comics/series-issues',
+            query_string={'series': 'Sorted Series', 'sort': 'title'},
+        )
+        assert response.status_code == 200
+        assert [
+            comic['title'] for comic in response.get_json()['comics']
+        ] == ['Alpha', 'Beta', 'Zulu']
 
 
 class TestDashboard:
@@ -269,6 +367,84 @@ class TestBulkAdd:
         assert response.get_json()['status'] == 'skipped'
 
 
+class TestEstimatedValueUpdate:
+    def test_update_estimated_value(self, client, test_user_id, app):
+        with app.app_context():
+            comic = Comic(
+                title='Powerless',
+                series='Powerless',
+                issue_number='1',
+                publisher='Marvel',
+                estimated_value=5.0,
+                user_id=test_user_id,
+            )
+            db.session.add(comic)
+            db.session.commit()
+            comic_id = comic.id
+
+        _login_as(client, test_user_id)
+        response = client.post(
+            f'/comics/{comic_id}/estimated-value',
+            json={'estimated_value': 13.92},
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert data['estimated_value'] == 13.92
+        assert data['formatted_value'] == '$13.92'
+
+        with app.app_context():
+            assert Comic.query.get(comic_id).estimated_value == 13.92
+
+    def test_update_estimated_value_rejects_invalid(self, client, test_user_id, app):
+        with app.app_context():
+            comic = Comic(
+                title='Invalid Value',
+                series='Test',
+                issue_number='1',
+                publisher='Test',
+                user_id=test_user_id,
+            )
+            db.session.add(comic)
+            db.session.commit()
+            comic_id = comic.id
+
+        _login_as(client, test_user_id)
+        response = client.post(
+            f'/comics/{comic_id}/estimated-value',
+            json={'estimated_value': 'nope'},
+        )
+        assert response.status_code == 400
+        assert response.get_json()['success'] is False
+
+    def test_show_page_includes_value_lookup(self, client, test_user_id, app):
+        with app.app_context():
+            comic = Comic(
+                title='Powerless',
+                series='Powerless',
+                issue_number='1',
+                publisher='Marvel',
+                user_id=test_user_id,
+            )
+            db.session.add(comic)
+            db.session.commit()
+            comic_id = comic.id
+
+        _login_as(client, test_user_id)
+        page = client.get(f'/comics/{comic_id}').get_data(as_text=True)
+        assert 'id="showValueLookupBtn"' in page
+        assert 'comic-enrich.js' in page
+        assert 'Enrich comic' in page
+        assert 'id="refreshComicVineShowBtn"' in page
+
+    def test_add_form_includes_enrich_button(self, client, test_user_id):
+        _login_as(client, test_user_id)
+        page = client.get('/comics/new').get_data(as_text=True)
+        assert 'id="enrichComicBtn"' in page
+        assert 'comic-enrich.js' in page
+        assert 'Enrich comic' in page
+
+
 class TestDeleteComic:
     def test_delete_comic(self, client, test_user_id, app):
         with app.app_context():
@@ -315,7 +491,7 @@ class TestDeleteComic:
 
 
 class TestComicVineCoverLookup:
-    @patch('app.comics.lookup_covers_for_form')
+    @patch('app.comics.routes_search.lookup_covers_for_form')
     def test_covers_lookup_success(self, mock_lookup, client, test_user_id, app):
         mock_lookup.return_value = {
             'covers': [
@@ -338,8 +514,8 @@ class TestComicVineCoverLookup:
         response = client.get('/comics/comicvine/covers/lookup?series_name=ROM&issue_number=1')
         assert response.status_code == 302
 
-    @patch('app.comics.search_comicvine_volumes')
-    @patch('app.comics.search_local_series_volumes')
+    @patch('app.comics.routes_search.search_comicvine_volumes')
+    @patch('app.comics.routes_search.search_local_series_volumes')
     def test_volumes_lookup_success(self, mock_local, mock_cv, client, test_user_id, app):
         mock_local.return_value = [{
             'source': 'Series Catalog',
@@ -364,8 +540,8 @@ class TestComicVineCoverLookup:
 
 
 class TestComicVineRefresh:
-    @patch('app.comics.fetch_comicvine_issue_covers')
-    @patch('app.services.comicvine.lookup_issue_metadata_for_refresh')
+    @patch('app.comics.routes_search.fetch_comicvine_issue_covers')
+    @patch('app.comics.routes_search.lookup_issue_metadata_for_refresh')
     def test_refresh_metadata_success(self, mock_refresh, mock_covers, client, test_user_id, app):
         mock_refresh.return_value = {
             'metadata': {
@@ -448,8 +624,8 @@ class TestComicCoverVariants:
             comic_id = comic.id
 
         _login_as(client, test_user_id)
-        primary = base64.b64encode(b'primary-cover').decode('utf-8')
-        alternate = base64.b64encode(b'alternate-cover').decode('utf-8')
+        primary = base64.b64encode(PRIMARY_COVER_BYTES).decode('utf-8')
+        alternate = base64.b64encode(ALTERNATE_COVER_BYTES).decode('utf-8')
 
         response = client.post(f'/comics/{comic_id}/covers', json={
             'replace': True,
@@ -474,13 +650,13 @@ class TestComicCoverVariants:
 
         with app.app_context():
             comic = db.session.get(Comic, comic_id)
-            assert comic.cover_image == b'primary-cover'
+            assert comic.cover_image == PRIMARY_COVER_BYTES
             assert comic.get_additional_covers()[0]['blob_data'] == alternate
 
     def test_set_primary_cover_promotes_variant(self, client, test_user_id, app):
         import base64
 
-        alt_blob = base64.b64encode(b'alternate-cover').decode('utf-8')
+        alt_blob = base64.b64encode(ALTERNATE_COVER_BYTES).decode('utf-8')
 
         with app.app_context():
             comic = Comic(
@@ -489,8 +665,8 @@ class TestComicCoverVariants:
                 issue_number='1',
                 publisher='Marvel Comics',
                 user_id=test_user_id,
-                cover_image=b'primary-cover',
-                cover_image_mime='image/jpeg',
+                cover_image=PRIMARY_COVER_BYTES,
+                cover_image_mime='image/png',
             )
             comic.set_additional_covers([{
                 'blob_data': alt_blob,
@@ -513,9 +689,9 @@ class TestComicCoverVariants:
 
         with app.app_context():
             comic = db.session.get(Comic, comic_id)
-            assert comic.cover_image == b'alternate-cover'
+            assert comic.cover_image == ALTERNATE_COVER_BYTES
             assert len(comic.get_additional_covers()) == 1
-            assert comic.get_additional_covers()[0]['blob_data'] == base64.b64encode(b'primary-cover').decode('utf-8')
+            assert comic.get_additional_covers()[0]['blob_data'] == base64.b64encode(PRIMARY_COVER_BYTES).decode('utf-8')
 
         response = client.get(f'/comics/{comic_id}/covers/{cover_id}/image')
         # After promotion the old cover id is gone; new alternate should still serve.
@@ -527,13 +703,20 @@ class TestComicCoverVariants:
 
         response = client.get(f'/comics/{comic_id}/covers/{new_alt_id}/image')
         assert response.status_code == 200
-        assert response.data == b'primary-cover'
+        assert response.data == PRIMARY_COVER_BYTES
+
+        response = client.get(f'/comics/{comic_id}/cover/thumbnail')
+        assert response.status_code == 200
+        assert response.content_type == 'image/jpeg'
+        with Image.open(BytesIO(response.data)) as thumbnail:
+            assert thumbnail.width <= 360
+            assert thumbnail.height <= 480
 
     def test_edit_swap_primary_and_store_alternates(self, client, test_user_id, app):
         import base64
 
-        primary_blob = base64.b64encode(b'primary-cover').decode('utf-8')
-        alt_blob = base64.b64encode(b'alternate-cover').decode('utf-8')
+        primary_blob = base64.b64encode(PRIMARY_COVER_BYTES).decode('utf-8')
+        alt_blob = base64.b64encode(ALTERNATE_COVER_BYTES).decode('utf-8')
 
         with app.app_context():
             comic = Comic(
@@ -542,8 +725,8 @@ class TestComicCoverVariants:
                 issue_number='1',
                 publisher='Marvel Comics',
                 user_id=test_user_id,
-                cover_image=b'primary-cover',
-                cover_image_mime='image/jpeg',
+                cover_image=PRIMARY_COVER_BYTES,
+                cover_image_mime='image/png',
             )
             comic.set_additional_covers([{
                 'blob_data': alt_blob,
@@ -574,7 +757,7 @@ class TestComicCoverVariants:
 
         with app.app_context():
             comic = db.session.get(Comic, comic_id)
-            assert comic.cover_image == b'alternate-cover'
+            assert comic.cover_image == ALTERNATE_COVER_BYTES
             alternates = comic.get_additional_covers()
             assert len(alternates) == 1
             assert alternates[0]['blob_data'] == primary_blob
@@ -582,7 +765,7 @@ class TestComicCoverVariants:
     def test_edit_metadata_only_preserves_alternates(self, client, test_user_id, app):
         import base64
 
-        alt_blob = base64.b64encode(b'alternate-cover').decode('utf-8')
+        alt_blob = base64.b64encode(ALTERNATE_COVER_BYTES).decode('utf-8')
 
         with app.app_context():
             comic = Comic(
@@ -591,8 +774,8 @@ class TestComicCoverVariants:
                 issue_number='1',
                 publisher='Marvel Comics',
                 user_id=test_user_id,
-                cover_image=b'primary-cover',
-                cover_image_mime='image/jpeg',
+                cover_image=PRIMARY_COVER_BYTES,
+                cover_image_mime='image/png',
             )
             comic.set_additional_covers([{
                 'blob_data': alt_blob,
@@ -619,6 +802,6 @@ class TestComicCoverVariants:
         with app.app_context():
             comic = db.session.get(Comic, comic_id)
             assert comic.title == 'Cover Test Updated'
-            assert comic.cover_image == b'primary-cover'
+            assert comic.cover_image == PRIMARY_COVER_BYTES
             assert len(comic.get_additional_covers()) == 1
 

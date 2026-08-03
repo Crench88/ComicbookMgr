@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/reader.css') }}?v=3">
+{% endblock %}
+
+{% block content %}
+<div class="reader-shell"
+     id="readerShell"
+     data-comic-id="{{ comic.id }}"
+     data-page="{{ page }}"
+     data-page-count="{{ page_count }}"
+     data-page-url-template="{{ url_for('reader.page_image', comic_id=comic.id, page_number=0) }}"
+     data-panels-url-template="{{ url_for('reader.page_panels', comic_id=comic.id, page_number=0) }}"
+     data-progress-url="{{ url_for('reader.save_progress', comic_id=comic.id) }}">
+    <header class="reader-toolbar">
+        <a class="reader-back" href="{{ url_for('comics.show', id=comic.id) }}">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        <div class="reader-title">
+            <strong>{{ comic.title }}</strong>
+            <span>#{{ comic.issue_number }} · {{ comic_file.format|upper }}</span>
+        </div>
+        <div class="reader-page-meta">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="readerPrev" aria-label="Previous page">
+                <i class="bi bi-chevron-left"></i>
+            </button>
+            <label class="reader-page-label">
+                <span class="visually-hidden">Page</span>
+                <input type="number" id="readerPageInput" min="1" max="{{ page_count }}" value="{{ page }}">
+                <span>/ {{ page_count }}</span>
+            </label>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="readerNext" aria-label="Next page">
+                <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+        <div class="reader-fit">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="fitWidth" title="Fit width">Width</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="fitHeight" title="Fit height">Height</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="panelModeToggle"
+                    title="Zoom into each panel (guided view)">
+                <i class="bi bi-grid-3x3-gap"></i> Panels
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="spreadToggle" title="Two-page spread">
+                <i class="bi bi-book"></i> Spread
+            </button>
+        </div>
+    </header>
+
+    <div class="reader-scrubber">
+        <input type="range" id="readerSlider" min="1" max="{{ page_count }}" value="{{ page }}"
+               aria-label="Jump to page">
+    </div>
+
+    <div class="reader-stage" id="readerStage">
+        <button type="button" class="reader-hotzone reader-hotzone-prev" id="hotPrev" aria-label="Previous page"></button>
+        <div class="reader-pages" id="readerPages">
+            <div class="reader-page-frame" id="readerPageFrame">
+                <img id="readerPageImage"
+                     class="reader-page fit-width"
+                     src="{{ url_for('reader.page_image', comic_id=comic.id, page_number=page) }}"
+                     alt="Page {{ page }} of {{ page_count }}">
+                <div class="reader-panel-hits" id="readerPanelHits" hidden></div>
+            </div>
+            <img id="readerPageImageB" class="reader-page fit-width d-none" alt="">
+        </div>
+        <button type="button" class="reader-hotzone reader-hotzone-next" id="hotNext" aria-label="Next page"></button>
+        <div class="reader-panel-focus" id="readerPanelFocus" hidden>
+            <button type="button" class="reader-panel-backdrop" id="panelFocusClose" aria-label="Close panel zoom"></button>
+            <div class="reader-panel-pop" id="readerPanelPop">
+                <img id="readerPanelCrop" alt="Focused panel">
+                <div class="reader-panel-caption">
+                    <span id="readerPanelCaption">Panel 1</span>
+                    <span class="reader-panel-hint">Tap outside or Esc to close · arrows for next panel</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <p class="reader-hint text-muted" id="readerHint">← → or A/D to turn pages · P for panel zoom · S for spread · click edges · Esc to leave</p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/reader.js') }}?v=3"></script>
+{% endblock %}

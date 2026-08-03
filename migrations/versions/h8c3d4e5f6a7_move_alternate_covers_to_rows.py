@@ -78,5 +78,25 @@ def upgrade():
 
 
 def downgrade():
+    connection = op.get_bind()
+    rows = connection.execute(sa.text(
+        "SELECT comic_id, image_data, mime_type, label, position "
+        "FROM comic_cover ORDER BY comic_id, position"
+    )).mappings()
+    covers_by_comic = {}
+    for row in rows:
+        covers_by_comic.setdefault(row['comic_id'], []).append({
+            'blob_data': base64.b64encode(row['image_data']).decode('ascii'),
+            'mime_type': row['mime_type'] or 'image/jpeg',
+            'label': row['label'] or 'Cover',
+        })
+    for comic_id, covers in covers_by_comic.items():
+        connection.execute(
+            sa.text(
+                "UPDATE comic SET additional_covers = :covers WHERE id = :comic_id"
+            ),
+            {'covers': json.dumps(covers), 'comic_id': comic_id},
+        )
+
     op.drop_index('ix_comic_cover_comic_id', table_name='comic_cover')
     op.drop_table('comic_cover')

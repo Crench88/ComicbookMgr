@@ -8,6 +8,8 @@ from datetime import datetime
 import requests
 
 from ..models import Comic
+from .series_link import apply_series_link
+from .cover_storage import persist_primary_cover
 from .. import db
 from .comicvine import search_comicvine_api, COMICVINE_HEADERS, COMICVINE_TIMEOUT
 
@@ -200,7 +202,8 @@ def lookup_issue_for_bulk(*, series: str, issue_number: str, api_key: str,
 
 
 def add_comic_from_search_result(*, result: dict, user_id: int, condition: str = '',
-                                 notes: str = '') -> Comic:
+                                 notes: str = '', in_collection: bool = True,
+                                 is_digital: bool = False) -> Comic:
     """Create a Comic row from a ComicVine search result, including cover download."""
     series_name = (result.get('series') or result.get('volume') or 'Unknown Series').strip()
     issue_number = (result.get('issue_number') or '').strip()
@@ -213,12 +216,10 @@ def add_comic_from_search_result(*, result: dict, user_id: int, condition: str =
         issue_number=issue_number or '?',
         publisher=(result.get('publisher') or 'Unknown').strip() or 'Unknown',
         characters=(result.get('characters') or '').strip() or None,
-        writer=(result.get('writer') or '').strip() or None,
-        artist=(result.get('artist') or '').strip() or None,
-        colorist=(result.get('colorist') or '').strip() or None,
-        letterer=(result.get('letterer') or '').strip() or None,
-        editor=(result.get('editor') or '').strip() or None,
-        cover_artist=(result.get('cover_artist') or '').strip() or None,
+        **{
+            field: (result.get(field) or '').strip() or None
+            for field, _ in Comic.CREDIT_FIELDS
+        },
         teams=(result.get('teams') or '').strip() or None,
         story_arc=(result.get('story_arc') or '').strip() or None,
         description=(result.get('description') or '').strip() or None,
@@ -227,10 +228,16 @@ def add_comic_from_search_result(*, result: dict, user_id: int, condition: str =
         genre=(result.get('genre') or 'Comic').strip() or 'Comic',
         release_date=_parse_release_date(result.get('release_date') or ''),
         upc=(result.get('upc') or '').strip() or None,
-        isbn=(result.get('isbn') or '').strip() or None,
         condition=condition or None,
         notes=notes or None,
         user_id=user_id,
+    )
+    comic.apply_ownership(in_collection=in_collection, is_digital=is_digital)
+    apply_series_link(
+        comic,
+        series_name,
+        comicvine_volume_id=result.get('_volume_id') or result.get('comicvine_volume_id'),
+        publisher=comic.publisher,
     )
 
     cover_url = result.get('cover_image_url') or ''
@@ -239,17 +246,18 @@ def add_comic_from_search_result(*, result: dict, user_id: int, condition: str =
         cover_url = first.get('url') or ''
 
     cover_data = _download_cover(cover_url)
-    if cover_data:
-        comic.cover_image, comic.cover_image_mime = cover_data
-
     db.session.add(comic)
+    db.session.flush()
+    if cover_data:
+        persist_primary_cover(comic, cover_data[0], cover_data[1])
     db.session.commit()
     return comic
 
 
 def bulk_add_single_issue(*, user_id: int, series: str, issue_number: str,
                           api_key: str, start_year=None, volume_hint=None,
-                          volume_id=None, condition: str = '', skip_existing: bool = True) -> dict:
+                          volume_id=None, condition: str = '', skip_existing: bool = True,
+                          in_collection: bool = True, is_digital: bool = False) -> dict:
     """
     Look up and add one issue. Returns a status dict for the API response.
     """
@@ -298,6 +306,8 @@ def bulk_add_single_issue(*, user_id: int, series: str, issue_number: str,
             result=result,
             user_id=user_id,
             condition=condition,
+            in_collection=in_collection,
+            is_digital=is_digital,
         )
         return {
             'status': 'added',

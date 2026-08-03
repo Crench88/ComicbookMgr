@@ -3,15 +3,26 @@
 {% block title %}{{ comic.title }} #{{ comic.issue_number }}{% endblock %}
 
 {% block content %}
-<div class="row">
+<div class="row comic-show-layout">
     <!-- Comic Cover -->
     <div class="col-md-4 mb-4">
-        <div class="card">
+        <div class="card" id="comicSidebarCard">
             {% if comic.has_cover_image() %}
-            <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}" 
-                 class="card-img-top" alt="{{ comic.title }}" style="max-height: 500px; object-fit: contain;">
+            {% if comic.has_digital_file() %}
+            <a href="{{ url_for('reader.read', comic_id=comic.id) }}"
+               class="comic-cover-read-link d-block"
+               title="Open reader">
+                <img src="{{ url_for('comics.serve_cover_image', id=comic.id, v=comic.cover_version()) }}"
+                     class="card-img-top" alt="{{ comic.title }}"
+                     style="max-height: 500px; object-fit: contain;">
+            </a>
             {% else %}
-            <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 
+            <img src="{{ url_for('comics.serve_cover_image', id=comic.id, v=comic.cover_version()) }}"
+                 class="card-img-top" alt="{{ comic.title }}"
+                 style="max-height: 500px; object-fit: contain;">
+            {% endif %}
+            {% else %}
+            <div class="card-img-top bg-light d-flex align-items-center justify-content-center"
                  style="height: 500px;">
                 <i class="bi bi-image text-muted display-1"></i>
             </div>
@@ -19,6 +30,14 @@
             
             <div class="card-body">
                 <div class="d-grid gap-2">
+                    {% if comic.has_digital_file() %}
+                    <a href="{{ url_for('reader.read', comic_id=comic.id) }}" class="btn btn-success">
+                        <i class="bi bi-book"></i> Read
+                        {% if comic.digital_file.page_count %}
+                        <span class="badge text-bg-light text-dark ms-1">{{ comic.digital_file.page_count }}p</span>
+                        {% endif %}
+                    </a>
+                    {% endif %}
                     <a href="{{ url_for('comics.edit', id=comic.id, next=collection_return_url) }}" class="btn btn-primary">
                         <i class="bi bi-pencil"></i> Edit Comic
                     </a>
@@ -27,85 +46,118 @@
                             data-comic-title="{{ comic.title|e }}">
                         <i class="bi bi-trash"></i> Delete Comic
                     </button>
+                    <a href="{{ collection_return_url }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to Collection
+                    </a>
                 </div>
+
+                <hr class="my-3">
+                <h6 class="mb-2"><i class="bi bi-file-zip"></i> Digital file</h6>
+                {% if comic.has_digital_file() %}
+                <p class="small text-muted mb-2">
+                    {{ comic.digital_file.original_filename }}
+                    · {{ comic.digital_file.format|upper }}
+                    · {{ comic.digital_file.page_count }} pages
+                    · {{ '%.1f'|format((comic.digital_file.file_size or 0) / 1048576) }} MB
+                </p>
+                <form method="POST" action="{{ url_for('reader.delete_file', comic_id=comic.id) }}" class="mb-2"
+                      onsubmit="return confirm('Remove the digital file from this comic?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary w-100">
+                        <i class="bi bi-x-circle"></i> Remove file
+                    </button>
+                </form>
+                {% else %}
+                <p class="small text-muted mb-2">No digital file attached yet.</p>
+                {% endif %}
+                <form method="POST" action="{{ url_for('reader.upload_file', comic_id=comic.id) }}"
+                      enctype="multipart/form-data" class="d-grid gap-2">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="file" name="digital_file" accept=".cbz,.zip,.cbr,.rar" class="form-control form-control-sm" required>
+                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-upload"></i>
+                        {% if comic.has_digital_file() %}Replace file{% else %}Upload CBZ / CBR{% endif %}
+                    </button>
+                </form>
+                {% if rar_support_problem %}
+                <p class="small text-muted mt-2 mb-0">
+                    <i class="bi bi-info-circle"></i> {{ rar_support_problem }}
+                </p>
+                {% endif %}
             </div>
         </div>
-        
-        <!-- Additional Covers -->
-        {% set cover_summaries = comic.list_cover_summaries() %}
-        {% if cover_summaries|length > 1 %}
-        <div class="card mt-3">
-            <div class="card-header">
-                <h6 class="mb-0"><i class="bi bi-images"></i> All Cover Images</h6>
-            </div>
-            <div class="card-body">
-                <div class="row g-2" id="coverVariantsGrid">
-                    {% for cover in cover_summaries %}
-                    <div class="col-6">
-                        <div class="position-relative">
-                            {% if cover.is_primary %}
-                            <img src="{{ url_for('comics.serve_cover_image', id=comic.id) }}"
-                                 class="img-thumbnail cover-variant-thumb"
-                                 alt="{{ cover.label }}"
-                                 style="width: 100%; height: 120px; object-fit: cover;"
-                                 title="Primary cover">
-                            {% else %}
-                            <img src="{{ url_for('comics.serve_cover_variant_image', id=comic.id, cover_id=cover.id) }}"
-                                 class="img-thumbnail cover-variant-thumb"
-                                 alt="{{ cover.label }}"
-                                 style="width: 100%; height: 120px; object-fit: cover; cursor: pointer;"
-                                 data-cover-id="{{ cover.id }}"
-                                 data-cover-label="{{ cover.label|e }}"
-                                 onclick="switchPrimaryCover(this.dataset.coverId, this.dataset.coverLabel)"
-                                 title="Click to set as primary cover">
-                            {% endif %}
-                            {% if cover.is_primary %}
-                            <div class="position-absolute top-0 start-0 bg-primary text-white px-1 py-0 small">
-                                Primary
-                            </div>
-                            {% endif %}
-                        </div>
-                        <small class="d-block text-center mt-1">{{ cover.label }}</small>
-                    </div>
-                    {% endfor %}
-                </div>
-                <div class="mt-3">
-                    <small class="text-muted">
-                        <i class="bi bi-info-circle"></i> Click any alternate cover to set it as the primary image
-                    </small>
-                </div>
-            </div>
-        </div>
-        {% endif %}
     </div>
     
     <!-- Comic Details -->
     <div class="col-md-8">
-        <div class="card">
+        <div class="card comic-show-details-card" id="comicDetailsCard">
             <div class="card-header">
-                <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
                     <h2 class="card-title mb-0">{{ comic.title }} #{{ comic.issue_number }}</h2>
-                    {% if comic.is_wishlist %}
-                    <span class="badge bg-warning text-dark">Wishlist</span>
-                    {% endif %}
+                    <div class="d-flex gap-2 flex-wrap align-items-center justify-content-end">
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary"
+                                id="refreshComicVineShowBtn"
+                                data-comic-id="{{ comic.id }}"
+                                data-series="{{ comic.series_label|e }}"
+                                data-title="{{ comic.title|e }}"
+                                data-issue-number="{{ (comic.issue_number or '')|e }}"
+                                data-publisher="{{ (comic.publisher or '')|e }}"
+                                data-condition="{{ (comic.condition or '')|e }}"
+                                title="ComicVine metadata, cover barcode scan, and eBay market value">
+                            <i class="bi bi-magic"></i> Enrich comic
+                        </button>
+                        {% for tag in comic.ownership_status_tags() %}
+                        <span class="badge {{ tag.class }}">{{ tag.label }}</span>
+                        {% endfor %}
+                        <span class="badge {% if comic.read_status == 'read' %}bg-success{% elif comic.read_status == 'reading' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+                            {{ comic.read_status_label }}
+                        </span>
+                    </div>
                 </div>
+                <div id="refreshComicVineShowStatus" class="alert d-none mt-2 mb-0 py-2 small" role="alert"></div>
             </div>
-            <div class="card-body">
+            <div class="card-body comic-show-details-body" id="comicDetailsBody">
                 <div class="row">
                     <div class="col-md-6">
                         <h5>Basic Information</h5>
                         <dl class="row">
                             <dt class="col-sm-4">Publisher:</dt>
                             <dd class="col-sm-8">{{ comic.publisher }}</dd>
+
+                            <dt class="col-sm-4">Read Status:</dt>
+                            <dd class="col-sm-8">{{ comic.read_status_label }}</dd>
+
+                            <dt class="col-sm-4">Tags:</dt>
+                            <dd class="col-sm-8">
+                                {% if comic.tags %}
+                                    {% for tag in comic.tags|sort(attribute='name') %}
+                                    <a href="{{ url_for('comics.index', tag=tag.name) }}" class="badge rounded-pill text-bg-light border text-decoration-none me-1">{{ tag.name }}</a>
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="text-muted">None</span>
+                                {% endif %}
+                            </dd>
                             
                             <dt class="col-sm-4">Genre:</dt>
                             <dd class="col-sm-8">{{ comic.genre or 'Not specified' }}</dd>
                             
                             <dt class="col-sm-4">UPC Code:</dt>
-                            <dd class="col-sm-8">{{ comic.upc or 'Not specified' }}</dd>
-                            
-                            <dt class="col-sm-4">ISBN Code:</dt>
-                            <dd class="col-sm-8">{{ comic.isbn or 'Not specified' }}</dd>
+                            <dd class="col-sm-8">
+                                <div class="d-flex flex-wrap align-items-center gap-2">
+                                    <span id="comicUpcValue">{{ comic.upc or 'Not specified' }}</span>
+                                    {% if comic.has_cover_image() %}
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-primary"
+                                            id="scanCoverBarcodeBtn"
+                                            data-comic-id="{{ comic.id }}"
+                                            data-existing-upc="{{ comic.upc or '' }}">
+                                        <i class="bi bi-upc-scan"></i> Scan from Cover
+                                    </button>
+                                    {% endif %}
+                                </div>
+                                <div id="scanCoverBarcodeStatus" class="small mt-1 d-none"></div>
+                            </dd>
                             
                             <dt class="col-sm-4">Release Date:</dt>
                             <dd class="col-sm-8">{{ comic.get_formatted_release_date() }}</dd>
@@ -123,10 +175,25 @@
                     
                     <div class="col-md-6">
                         <h5>Value & Status</h5>
-                        <dl class="row">
+                        <dl class="row mb-0">
                             <dt class="col-sm-4">Estimated Value:</dt>
                             <dd class="col-sm-8">
-                                <span class="badge bg-success fs-6">{{ comic.get_formatted_value() }}</span>
+                                <div class="d-flex flex-wrap align-items-center gap-2">
+                                    <span class="badge bg-success fs-6" id="comicEstimatedValueBadge">{{ comic.get_formatted_value() }}</span>
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-primary"
+                                            id="showValueLookupBtn"
+                                            title="Look up market value from eBay Canada"
+                                            data-comic-id="{{ comic.id }}"
+                                            data-series="{{ comic.series_label|e }}"
+                                            data-title="{{ comic.title|e }}"
+                                            data-issue-number="{{ (comic.issue_number or '')|e }}"
+                                            data-publisher="{{ (comic.publisher or '')|e }}"
+                                            data-condition="{{ (comic.condition or '')|e }}">
+                                        <i class="bi bi-graph-up"></i> Look up value
+                                    </button>
+                                </div>
+                                <div id="showValueEstimateHost" class="mt-2"></div>
                             </dd>
                             
                             <dt class="col-sm-4">Added:</dt>
@@ -137,11 +204,18 @@
                             
                             <dt class="col-sm-4">Status:</dt>
                             <dd class="col-sm-8">
-                                {% if comic.is_wishlist %}
-                                <span class="badge bg-warning text-dark">Wishlist Item</span>
-                                {% else %}
-                                <span class="badge bg-success">In Collection</span>
-                                {% endif %}
+                                {% from "comics/partials/_ownership_sliders.html" import ownership_sliders, ownership_status_badges %}
+                                <div class="mb-2">
+                                    {{ ownership_status_badges(comic) }}
+                                </div>
+                                {{ ownership_sliders(
+                                    in_collection_id='showInCollection',
+                                    digital_id='showIsDigital',
+                                    in_collection_checked=comic.in_collection,
+                                    digital_checked=comic.is_digital or comic.has_digital_file(),
+                                    compact=True
+                                ) }}
+                                <div id="showOwnershipStatus" class="small mt-1 text-muted d-none"></div>
                             </dd>
                         </dl>
                     </div>
@@ -158,34 +232,15 @@
                 </div>
                 {% endif %}
 
-                {% if comic.writer or comic.artist or comic.colorist or comic.letterer or comic.editor or comic.cover_artist %}
+                {% set credits = comic.credits() %}
+                {% if credits %}
                 <div class="mt-4">
                     <h5>Creative Team</h5>
-                    <dl class="row mb-0">
-                        {% if comic.writer %}
-                        <dt class="col-sm-3">Writer</dt>
-                        <dd class="col-sm-9">{{ comic.writer }}</dd>
-                        {% endif %}
-                        {% if comic.artist %}
-                        <dt class="col-sm-3">Artist</dt>
-                        <dd class="col-sm-9">{{ comic.artist }}</dd>
-                        {% endif %}
-                        {% if comic.colorist %}
-                        <dt class="col-sm-3">Colorist</dt>
-                        <dd class="col-sm-9">{{ comic.colorist }}</dd>
-                        {% endif %}
-                        {% if comic.letterer %}
-                        <dt class="col-sm-3">Letterer</dt>
-                        <dd class="col-sm-9">{{ comic.letterer }}</dd>
-                        {% endif %}
-                        {% if comic.editor %}
-                        <dt class="col-sm-3">Editor</dt>
-                        <dd class="col-sm-9">{{ comic.editor }}</dd>
-                        {% endif %}
-                        {% if comic.cover_artist %}
-                        <dt class="col-sm-3">Cover Artist</dt>
-                        <dd class="col-sm-9">{{ comic.cover_artist }}</dd>
-                        {% endif %}
+                    <dl class="row mb-0 gy-1">
+                        {% for label, names in credits %}
+                        <dt class="col-sm-3">{{ label }}</dt>
+                        <dd class="col-sm-9 mb-0">{{ names }}</dd>
+                        {% endfor %}
                     </dl>
                 </div>
                 {% endif %}
@@ -237,18 +292,60 @@
                 {% endif %}
             </div>
         </div>
-        
-        <!-- Navigation -->
-        <div class="mt-4">
-            <a href="{{ collection_return_url }}" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left"></i> Back to Collection
-            </a>
-            <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-primary">
-                <i class="bi bi-speedometer2"></i> Dashboard
-            </a>
+    </div>
+</div>
+
+{% set cover_summaries = comic.list_cover_summaries() %}
+{% if cover_summaries|length > 1 %}
+<div class="card mt-3" id="comicCoverGalleryCard">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h6 class="mb-0"><i class="bi bi-images"></i> All Cover Images</h6>
+        <small class="text-muted mb-0">
+            <i class="bi bi-info-circle"></i> Click any alternate cover to set it as the primary image
+        </small>
+    </div>
+    <div class="card-body">
+        <div class="row g-3" id="coverVariantsGrid">
+            {% for cover in cover_summaries %}
+            <div class="col-6 col-md-3 col-xl-2">
+                <div class="position-relative comic-cover-variant{% if not cover.is_primary %} comic-cover-variant-clickable{% endif %}">
+                    {% if cover.is_primary %}
+                    <img src="{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=cover.version) }}"
+                         class="img-thumbnail cover-variant-thumb w-100"
+                         alt="{{ cover.label }}"
+                         style="height: 220px; object-fit: cover;"
+                         title="Primary cover">
+                    {% else %}
+                    <img src="{{ url_for('comics.serve_cover_variant_thumbnail', id=comic.id, cover_id=cover.id, v=cover.version) }}"
+                         class="img-thumbnail cover-variant-thumb w-100"
+                         alt="{{ cover.label }}"
+                         style="height: 220px; object-fit: cover; cursor: pointer;"
+                         data-cover-id="{{ cover.id }}"
+                         data-cover-label="{{ cover.label|e }}"
+                         onclick="switchPrimaryCover(this.dataset.coverId, this.dataset.coverLabel)"
+                         title="Click to set as primary cover">
+                    {% endif %}
+                    {% if cover.is_primary %}
+                    <div class="position-absolute top-0 start-0 bg-primary text-white px-2 py-1 small rounded-end">
+                        Primary
+                    </div>
+                    {% else %}
+                    <button type="button"
+                            class="btn btn-sm btn-primary position-absolute bottom-0 start-0 end-0 m-2"
+                            data-cover-id="{{ cover.id }}"
+                            data-cover-label="{{ cover.label|e }}"
+                            onclick="switchPrimaryCover(this.dataset.coverId, this.dataset.coverLabel)">
+                        Set as Primary
+                    </button>
+                    {% endif %}
+                </div>
+                <small class="d-block text-center mt-2">{{ cover.label }}</small>
+            </div>
+            {% endfor %}
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- Delete Confirmation Modal -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
@@ -276,7 +373,266 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/comic-enrich.js') }}"></script>
 <script>
+
+document.addEventListener('DOMContentLoaded', function () {
+    const sidebarCard = document.getElementById('comicSidebarCard');
+    const detailsCard = document.getElementById('comicDetailsCard');
+
+    function syncDetailsHeight() {
+        if (!sidebarCard || !detailsCard) return;
+        if (window.matchMedia('(max-width: 767.98px)').matches) {
+            detailsCard.style.height = '';
+            detailsCard.style.maxHeight = '';
+            return;
+        }
+        const height = Math.round(sidebarCard.getBoundingClientRect().height);
+        if (height > 0) {
+            detailsCard.style.height = height + 'px';
+            detailsCard.style.maxHeight = height + 'px';
+        }
+    }
+
+    syncDetailsHeight();
+    window.addEventListener('resize', syncDetailsHeight);
+    sidebarCard?.querySelectorAll('img').forEach(function (img) {
+        if (!img.complete) {
+            img.addEventListener('load', syncDetailsHeight, { once: true });
+        }
+    });
+    if (typeof ResizeObserver !== 'undefined' && sidebarCard) {
+        new ResizeObserver(syncDetailsHeight).observe(sidebarCard);
+    }
+
+    const enrich = window.ComicEnrich;
+    const estimatedValueBadge = document.getElementById('comicEstimatedValueBadge');
+    const showValueHost = document.getElementById('showValueEstimateHost');
+    const upcValue = document.getElementById('comicUpcValue');
+
+    function fieldsFromDataset(el) {
+        if (!el || !el.dataset) return {};
+        return {
+            series: el.dataset.series || '',
+            title: el.dataset.title || '',
+            issue_number: el.dataset.issueNumber || '',
+            publisher: el.dataset.publisher || '',
+            condition: el.dataset.condition || '',
+        };
+    }
+
+    function applySavedValueToBadge(formatted) {
+        if (estimatedValueBadge && formatted) {
+            estimatedValueBadge.textContent = formatted;
+        }
+    }
+
+    function showEstimatePanel(estimate, comicId) {
+        if (!enrich || !showValueHost || !estimate) return;
+        enrich.renderValuePanel(showValueHost, estimate, {
+            onApply: function (est, applyBtn) {
+                applyBtn.disabled = true;
+                applyBtn.textContent = 'Saving…';
+                enrich.saveEstimatedValue(comicId, est.value).then(function (result) {
+                    if (!result.ok) {
+                        applyBtn.disabled = false;
+                        applyBtn.textContent = 'Save estimated value';
+                        alert(result.error || 'Could not save estimated value.');
+                        return;
+                    }
+                    applySavedValueToBadge(result.data.formatted_value);
+                    applyBtn.textContent = 'Saved';
+                    applyBtn.classList.remove('btn-success');
+                    applyBtn.classList.add('btn-outline-success');
+                });
+            },
+        });
+    }
+
+    const refreshShowBtn = document.getElementById('refreshComicVineShowBtn');
+    const refreshShowStatus = document.getElementById('refreshComicVineShowStatus');
+    if (refreshShowBtn && enrich) {
+        function setShowRefreshStatus(message, level) {
+            if (!refreshShowStatus) return;
+            refreshShowStatus.className = `alert alert-${level || 'info'} mt-2 mb-0 py-2 small`;
+            refreshShowStatus.textContent = message;
+            refreshShowStatus.classList.remove('d-none');
+        }
+
+        refreshShowBtn.addEventListener('click', async function () {
+            const comicId = refreshShowBtn.dataset.comicId;
+            if (!comicId) return;
+
+            const originalHtml = refreshShowBtn.innerHTML;
+            refreshShowBtn.disabled = true;
+            try {
+                const result = await enrich.enrichAll({
+                    comicId: comicId,
+                    fields: fieldsFromDataset(refreshShowBtn),
+                    comicvineMethod: 'POST',
+                    saveValue: true,
+                    confirm: 'Enrich this comic from ComicVine, scan the cover barcode, and look up / save eBay market value?',
+                    onStatus: setShowRefreshStatus,
+                    onBarcode: function (barcodeResult) {
+                        if (barcodeResult.ok && upcValue && barcodeResult.data && barcodeResult.data.upc) {
+                            upcValue.textContent = barcodeResult.data.upc;
+                            const scanBtn = document.getElementById('scanCoverBarcodeBtn');
+                            if (scanBtn) scanBtn.dataset.existingUpc = barcodeResult.data.upc;
+                        }
+                    },
+                    onValue: function (valueResult) {
+                        if (valueResult.ok) {
+                            showEstimatePanel(valueResult.estimate, comicId);
+                        }
+                    },
+                });
+                if (result.cancelled) return;
+                if (result.savedValue && result.savedValue.ok) {
+                    applySavedValueToBadge(result.savedValue.data.formatted_value);
+                }
+                if (result.comicvine && result.comicvine.ok) {
+                    setShowRefreshStatus((result.summary || 'Enrichment complete') + '. Reloading…', 'success');
+                    window.location.reload();
+                    return;
+                }
+                setShowRefreshStatus(result.summary || 'Enrichment finished.', result.ok ? 'success' : 'warning');
+            } catch (err) {
+                setShowRefreshStatus('Enrichment failed: ' + err.message, 'danger');
+            } finally {
+                refreshShowBtn.disabled = false;
+                refreshShowBtn.innerHTML = originalHtml;
+            }
+        });
+    }
+
+    const showValueLookupBtn = document.getElementById('showValueLookupBtn');
+    if (showValueLookupBtn && showValueHost && enrich) {
+        showValueLookupBtn.addEventListener('click', async function () {
+            const fields = fieldsFromDataset(showValueLookupBtn);
+            if (!fields.series && !fields.title && !fields.issue_number) {
+                alert('This comic needs a series, title, or issue number before looking up a value.');
+                return;
+            }
+            const originalHtml = showValueLookupBtn.innerHTML;
+            showValueLookupBtn.disabled = true;
+            showValueLookupBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Looking up…';
+            showValueHost.innerHTML = '';
+            try {
+                const result = await enrich.lookupValue(fields);
+                if (!result.ok) {
+                    throw new Error(result.error || 'Failed to estimate a value');
+                }
+                showEstimatePanel(result.estimate, showValueLookupBtn.dataset.comicId);
+            } catch (error) {
+                console.error('Value lookup error:', error);
+                showValueHost.innerHTML =
+                    '<div class="alert alert-warning mb-0 py-2"><i class="bi bi-exclamation-triangle"></i> Could not estimate a value: ' +
+                    enrich.escapeHtml(error.message) + '</div>';
+            } finally {
+                showValueLookupBtn.disabled = false;
+                showValueLookupBtn.innerHTML = originalHtml;
+            }
+        });
+    }
+
+    const btn = document.getElementById('scanCoverBarcodeBtn');
+    const status = document.getElementById('scanCoverBarcodeStatus');
+    if (btn && enrich) {
+        function setStatus(message, kind) {
+            if (!status) return;
+            status.classList.remove('d-none', 'text-success', 'text-danger', 'text-muted', 'text-warning');
+            status.classList.add(kind || 'text-muted');
+            status.textContent = message;
+        }
+
+        btn.addEventListener('click', async function () {
+            btn.disabled = true;
+            setStatus('Scanning cover for barcode…', 'text-muted');
+            try {
+                const result = await enrich.scanBarcode(btn.dataset.comicId);
+                if (result.cancelled) {
+                    setStatus(result.error, 'text-warning');
+                    return;
+                }
+                if (!result.ok) {
+                    setStatus(result.error || 'No barcode found.', 'text-danger');
+                    return;
+                }
+                if (upcValue) upcValue.textContent = result.data.upc;
+                btn.dataset.existingUpc = result.data.upc;
+                setStatus(
+                    'Saved UPC ' + result.data.upc +
+                    (result.data.source_cover ? ' (from ' + result.data.source_cover + ' cover)' : ''),
+                    'text-success'
+                );
+            } catch (err) {
+                console.error(err);
+                setStatus('Barcode scan failed. Check that OpenCV/pyzbar are installed.', 'text-danger');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    }
+
+    const showInCollection = document.getElementById('showInCollection');
+    const showIsDigital = document.getElementById('showIsDigital');
+    const ownershipBadges = document.getElementById('comicOwnershipBadges');
+    const ownershipStatus = document.getElementById('showOwnershipStatus');
+    if (showInCollection && showIsDigital) {
+        const comicId = refreshShowBtn?.dataset.comicId
+            || document.getElementById('showValueLookupBtn')?.dataset.comicId
+            || document.querySelector('[data-comic-id]')?.dataset.comicId;
+
+        function setOwnershipMessage(message, kind) {
+            if (!ownershipStatus) return;
+            ownershipStatus.classList.remove('d-none', 'text-success', 'text-danger', 'text-muted');
+            ownershipStatus.classList.add(kind || 'text-muted');
+            ownershipStatus.textContent = message;
+        }
+
+        function renderOwnershipBadges(tags) {
+            if (!ownershipBadges || !Array.isArray(tags)) return;
+            ownershipBadges.innerHTML = tags.map(function (tag) {
+                return '<span class="badge ' + (tag.class || 'bg-secondary') + '">' +
+                    (window.ComicEnrich ? window.ComicEnrich.escapeHtml(tag.label) : tag.label) +
+                    '</span>';
+            }).join(' ');
+        }
+
+        async function saveOwnership() {
+            if (!comicId) return;
+            setOwnershipMessage('Saving status…', 'text-muted');
+            try {
+                const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '{{ csrf_token }}';
+                const response = await fetch(`/comics/${comicId}/ownership`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrf,
+                    },
+                    body: JSON.stringify({
+                        in_collection: !!showInCollection.checked,
+                        is_digital: !!showIsDigital.checked,
+                    }),
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Could not update ownership.');
+                }
+                showInCollection.checked = !!data.in_collection;
+                showIsDigital.checked = !!data.is_digital || !!data.digital_active;
+                renderOwnershipBadges(data.tags || []);
+                setOwnershipMessage('Status updated.', 'text-success');
+            } catch (err) {
+                setOwnershipMessage(err.message, 'text-danger');
+            }
+        }
+
+        showInCollection.addEventListener('change', saveOwnership);
+        showIsDigital.addEventListener('change', saveOwnership);
+    }
+});
+
 async function switchPrimaryCover(coverId, label) {
     if (!coverId) return;
     if (!confirm(`Set "${label}" as the primary cover image?`)) return;

@@ -1,0 +1,104 @@
+                {% from "comics/partials/_volume_picker.html" import series_volume_picker %}
+                <!-- Comic Search Section -->
+                <div class="card mb-4 border-primary">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center gap-2 flex-wrap">
+                        <h5 class="mb-0">
+                            <i class="bi bi-search"></i> Search for Comic Information
+                        </h5>
+                        <button type="button" class="btn btn-sm btn-light" id="enrichComicBtn"
+                                {% if comic %}data-comic-id="{{ comic.id }}"{% endif %}
+                                title="ComicVine metadata, cover barcode, and eBay market value">
+                            <i class="bi bi-magic"></i> Enrich comic
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="enrichComicStatus" class="alert d-none mb-3" role="alert"></div>
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                                                         <label for="searchQuery" class="form-label">Search by Title, Year, or ComicVine URL</label>
+                                                                         <input type="text" class="form-control" id="searchQuery"
+                                           placeholder="e.g., Star Wars 1977 #1  |  Amazing Spider-Man Vol 2 #15  |  https://comicvine.gamespot.com/.../4000-17616/">
+                                                                         <div class="form-text">
+                                                                             Tip: include a year (e.g. "Star Wars <strong>1977</strong> #1") to disambiguate reprints, or paste a ComicVine URL / <code>4000-NNNNN</code> id for an instant exact match.
+                                                                         </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">&nbsp;</label>
+                                    <button type="button" class="btn btn-primary w-100" id="searchBtn">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {% if comic %}
+                        {{ series_volume_picker() }}
+                        {% endif %}
+
+                        <!-- API Selection Checkboxes -->
+                        <div class="row">
+                            <div class="col-12">
+                                <div class="mb-3">
+                                    <label class="form-label">Search Sources:</label>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchComicVine" checked>
+                                        <label class="form-check-label" for="searchComicVine">
+                                            <i class="bi bi-globe"></i> ComicVine
+                                            <span class="badge bg-success ms-1" id="comicvineStatus">✓</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="searchLocal" checked>
+                                        <label class="form-check-label" for="searchLocal">
+                                            <i class="bi bi-database"></i> Local Database
+                                            <span class="badge bg-success ms-1" id="localStatus">✓</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                                                                         <div class="small text-muted">
+                            <i class="bi bi-info-circle"></i> 
+                            <span id="statusInfo">ComicVine pulls live data. Local Database searches the Series Catalog you maintain under Comic Admin. Select both to combine live data with your curated series issues.</span>
+                        </div>
+                            </div>
+                        </div>
+
+                        <!-- Local database filters -->
+                        <div id="localFilters" class="row g-3 mt-1">
+                            <div class="col-md-8">
+                                <label for="localSeriesInput" class="form-label">Series (Series Catalog)</label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="localSeriesInput"
+                                       placeholder="Start typing to filter series..."
+                                       list="seriesOptions">
+                                <div class="form-text">Filters local results to one of your saved series.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="localIssueInput" class="form-label">Issue Number</label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="localIssueInput"
+                                       placeholder="e.g., 1 or 001">
+                                <div class="form-text">Optional issue filter for the selected series.</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Search Results -->
+                        <div id="searchResults" class="d-none">
+                            <h6>Search Results:</h6>
+                            <div id="resultsList" class="list-group mb-3"></div>
+                        </div>
+                        
+                        <div id="searchLoading" class="d-none text-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Searching for comics...</p>
+                        </div>
+                        
+                        <div id="searchError" class="d-none alert alert-danger"></div>
+                    </div>
+                </div>

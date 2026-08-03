@@ -12,7 +12,7 @@ from io import StringIO
 
 from . import db
 from .forms import SeriesForm, SeriesIssueForm, SeriesIssueUploadForm
-from .models import Series, SeriesIssue, Comic
+from .models import Series, SeriesIssue, Comic, User
 from .services.comicvine import (
     parse_comicvine_volume_id,
     fetch_volume_issues_for_import,
@@ -87,7 +87,7 @@ def series_issues():
 
     issues = []
     if selected_series_id:
-        series = Series.query.get(selected_series_id)
+        series = db.session.get(Series, selected_series_id)
         if series:
             issues = sorted(series.issues, key=lambda issue: issue.sort_key)
 
@@ -146,6 +146,7 @@ def series_issues():
             comic = Comic(
                 title=issue.title or series.display_name,
                 series=series.display_name,
+                series_id=series.id,
                 issue_title=issue.title or series.display_name,
                 issue_number=issue.issue_number,
                 publisher=series.publisher or '',
@@ -358,4 +359,95 @@ def import_comicvine_series(series_id):
         'success',
     )
     return redirect(url_for('admin.series_issues', series_id=series_id))
+
+
+@admin_bp.route('/roles')
+@admin_required
+def manage_roles():
+    """List users and their admin/active roles."""
+    users = User.query.order_by(User.username.asc()).all()
+    admin_count = User.query.filter_by(is_admin=True).count()
+    return render_template(
+        'admin/roles.html',
+        users=users,
+        admin_count=admin_count,
+        csrf_token=generate_csrf(),
+    )
+
+
+@admin_bp.route('/roles/<int:user_id>/toggle-admin', methods=['POST'])
+@admin_required
+def toggle_user_admin(user_id):
+    """Grant or revoke admin access for a user."""
+    user = db.session.get(User, user_id)
+    if user is None:
+        flash('User not found.', 'danger')
+        return redirect(url_for('admin.manage_roles'))
+
+    if user.id == current_user.id and user.is_admin:
+        flash('You cannot remove your own admin access.', 'warning')
+        return redirect(url_for('admin.manage_roles'))
+
+    if user.is_admin:
+        other_admins = User.query.filter(
+            User.is_admin.is_(True),
+            User.id != user.id,
+        ).count()
+        if other_admins == 0:
+            flash('Cannot remove admin from the last admin account.', 'warning')
+            return redirect(url_for('admin.manage_roles'))
+        user.is_admin = False
+        flash(f'Admin access removed from {user.username}.', 'success')
+    else:
+        user.is_admin = True
+        flash(f'Admin access granted to {user.username}.', 'success')
+
+    db.session.commit()
+    return redirect(url_for('admin.manage_roles'))
+
+
+@admin_bp.route('/roles/<int:user_id>/toggle-active', methods=['POST'])
+@admin_required
+def toggle_user_active(user_id):
+    """Activate or deactivate a user account."""
+    user = db.session.get(User, user_id)
+    if user is None:
+        flash('User not found.', 'danger')
+        return redirect(url_for('admin.manage_roles'))
+
+    if user.id == current_user.id:
+        flash('You cannot deactivate your own account.', 'warning')
+        return redirect(url_for('admin.manage_roles'))
+
+    user.is_active = not bool(user.is_active)
+    db.session.commit()
+    state = 'activated' if user.is_active else 'deactivated'
+    flash(f'Account {user.username} {state}.', 'success')
+    return redirect(url_for('admin.manage_roles'))
+
+
+@admin_bp.route('/roles/<int:user_id>/reset-password', methods=['POST'])
+@admin_required
+def reset_user_password(user_id):
+    """Set a new password for another user (or yourself) from Manage Roles."""
+    user = db.session.get(User, user_id)
+    if user is None:
+        flash('User not found.', 'danger')
+        return redirect(url_for('admin.manage_roles'))
+
+    password = (request.form.get('password') or '').strip()
+    confirm = (request.form.get('confirm_password') or '').strip()
+
+    if len(password) < 6:
+        flash('Password must be at least 6 characters.', 'danger')
+        return redirect(url_for('admin.manage_roles'))
+    if password != confirm:
+        flash('Passwords do not match.', 'danger')
+        return redirect(url_for('admin.manage_roles'))
+
+    user.set_password(password)
+    user.clear_reset_token()
+    db.session.commit()
+    flash(f'Password reset for {user.username}.', 'success')
+    return redirect(url_for('admin.manage_roles'))
 

@@ -6,8 +6,9 @@ Handles the main dashboard with statistics and overview.
 from flask import Blueprint, render_template, redirect, url_for, flash
 from flask_login import login_required, current_user
 from sqlalchemy import func
+from sqlalchemy.orm import defer, with_expression
 from . import db
-from .models import Comic
+from .models import Comic, ComicFile, ReadingProgress
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -31,10 +32,12 @@ def index():
     
     # Get most frequent characters
     all_characters = []
-    comics = Comic.query.filter_by(user_id=current_user.id, is_wishlist=False).all()
-    for comic in comics:
-        if comic.characters:
-            all_characters.extend([char.strip() for char in comic.characters.split(',')])
+    character_rows = db.session.query(Comic.characters).filter_by(
+        user_id=current_user.id,
+        is_wishlist=False,
+    ).filter(Comic.characters.isnot(None)).all()
+    for (characters,) in character_rows:
+        all_characters.extend([char.strip() for char in characters.split(',')])
     
     # Count character frequency
     character_counts = {}
@@ -47,6 +50,13 @@ def index():
     # Get recent additions
     recent_comics = Comic.query.filter_by(
         user_id=current_user.id, is_wishlist=False
+    ).options(
+        defer(Comic.cover_image),
+        defer(Comic.additional_covers),
+        with_expression(
+            Comic.cover_available,
+            db.or_(Comic.cover_image_path.isnot(None), Comic.cover_image.isnot(None)),
+        ),
     ).order_by(Comic.created_at.desc()).limit(9).all()
     
     # Get condition distribution
@@ -55,7 +65,29 @@ def index():
     ).filter_by(user_id=current_user.id, is_wishlist=False).group_by(
         Comic.condition
     ).all()
-    
+
+    continue_reading = db.session.query(
+        Comic, ReadingProgress.page_number, ComicFile.page_count
+    ).join(
+        ReadingProgress,
+        db.and_(
+            ReadingProgress.comic_id == Comic.id,
+            ReadingProgress.user_id == current_user.id,
+        ),
+    ).join(
+        ComicFile, ComicFile.comic_id == Comic.id
+    ).filter(
+        Comic.user_id == current_user.id,
+        ReadingProgress.page_number < ComicFile.page_count,
+    ).options(
+        defer(Comic.cover_image),
+        defer(Comic.additional_covers),
+        with_expression(
+            Comic.cover_available,
+            db.or_(Comic.cover_image_path.isnot(None), Comic.cover_image.isnot(None)),
+        ),
+    ).order_by(ReadingProgress.updated_at.desc()).limit(6).all()
+
     return render_template('dashboard/index.html',
                          title='Dashboard',
                          total_comics=total_comics,
@@ -64,6 +96,7 @@ def index():
                          top_publishers=top_publishers,
                          top_characters=top_characters,
                          recent_comics=recent_comics,
+                         continue_reading=continue_reading,
                          condition_stats=condition_stats)
 
 @dashboard_bp.route('/profile')
