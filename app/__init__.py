@@ -20,6 +20,21 @@ DEFAULT_MAX_REQUEST_SIZE = 64 * 1024 * 1024
 DEFAULT_READER_CACHE_SIZE = 512 * 1024 * 1024
 
 
+def _resolve_database_uri(raw_uri, instance_path):
+    """
+    Point relative sqlite URLs at the instance folder so WSGI hosts
+    (PythonAnywhere) do not create comicbook.db in a random cwd.
+    Absolute sqlite paths (sqlite:////...) and non-sqlite URLs are unchanged.
+    """
+    if not raw_uri:
+        raw_uri = 'sqlite:///comicbook.db'
+    if raw_uri.startswith('sqlite:///') and not raw_uri.startswith('sqlite:////'):
+        relative = raw_uri[len('sqlite:///'):]
+        if relative and not os.path.isabs(relative):
+            return 'sqlite:///' + os.path.join(instance_path, relative).replace('\\', '/')
+    return raw_uri
+
+
 def _request_size_limit():
     """Return the configured request limit, falling back to 64 MB."""
     try:
@@ -66,7 +81,10 @@ def create_app(test_config=None):
         
         app.config.from_mapping(
             SECRET_KEY=secret_key,
-            SQLALCHEMY_DATABASE_URI=os.environ.get('DATABASE_URL', 'sqlite:///comicbook.db'),
+            SQLALCHEMY_DATABASE_URI=_resolve_database_uri(
+                os.environ.get('DATABASE_URL', 'sqlite:///comicbook.db'),
+                app.instance_path,
+            ),
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
             SESSION_COOKIE_HTTPONLY=True,
             SESSION_COOKIE_SAMESITE='Lax',

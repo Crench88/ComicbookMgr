@@ -50,30 +50,27 @@ def main():
     
     # Create admin user
     print("\n👤 Creating admin user...")
+    print("Prefer: python scripts/pythonanywhere_bootstrap.py --email you@example.com --password '...')")
     admin_script = """
 from app import create_app, db
 from app.models import User
-from werkzeug.security import generate_password_hash
 
 app = create_app()
 with app.app_context():
-    # Check if admin user already exists
     admin = User.query.filter_by(username='admin').first()
     if not admin:
         admin = User(
             username='admin',
             email='admin@example.com',
-            password_hash=generate_password_hash('admin123'),
-            is_active=True
+            is_active=True,
+            is_admin=True,
         )
+        admin.set_password('admin123')
         db.session.add(admin)
         db.session.commit()
-        print('✅ Admin user created successfully!')
-        print('   Username: admin')
-        print('   Password: admin123')
-        print('   Email: admin@example.com')
+        print('Admin user created: admin / admin123 (change this password!)')
     else:
-        print('ℹ️  Admin user already exists')
+        print('Admin user already exists')
 """
     
     with open("temp_admin_setup.py", "w") as f:
