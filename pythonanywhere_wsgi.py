@@ -2,18 +2,19 @@
 WSGI entry point template for PythonAnywhere.
 
 On PythonAnywhere, open the Web tab → WSGI configuration file, replace the
-sample code with this file's contents, and set YOUR_USERNAME (or set
-COMICBOOKMGR_HOME).
+sample code with this file's contents (or keep using an absolute PROJECT_HOME).
 """
 
 import os
 import sys
+from pathlib import Path
 
-# --- PythonAnywhere: set this to your cloned project path ---
-PROJECT_HOME = os.environ.get(
-    'COMICBOOKMGR_HOME',
-    '/home/YOUR_USERNAME/ComicbookMgr',
-)
+# Prefer an explicit path; otherwise use this file's directory (the repo root).
+PROJECT_HOME = os.environ.get('COMICBOOKMGR_HOME') or str(Path(__file__).resolve().parent)
+if 'YOUR_USERNAME' in PROJECT_HOME:
+    PROJECT_HOME = str(Path(__file__).resolve().parent)
+
+os.environ['COMICBOOKMGR_HOME'] = PROJECT_HOME
 
 if PROJECT_HOME not in sys.path:
     sys.path.insert(0, PROJECT_HOME)
