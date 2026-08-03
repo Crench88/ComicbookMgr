@@ -226,18 +226,9 @@ cd ~/ComicbookMgr
 source venv/bin/activate
 git pull origin deploy/pythonanywhere
 pip install -r requirements.txt
-python -c "from flask_migrate import upgrade; from app import create_app; app=create_app();\
-import os; \
-exec('with app.app_context(): upgrade()')"
-```
-
-Or simply:
-
-```bash
 export FLASK_APP=pythonanywhere_wsgi:application
 flask db upgrade
 ```
-
 
 Then **Web** → **Reload**.
 
