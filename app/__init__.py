@@ -4,6 +4,7 @@ A Flask web application for managing personal comic book collections.
 """
 
 import os
+from datetime import timedelta
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
@@ -12,6 +13,11 @@ from flask_mail import Mail
 from flask_wtf.csrf import CSRFProtect
 from markupsafe import Markup, escape
 from dotenv import load_dotenv
+
+from .session_timeout import (
+    DEFAULT_IDLE_TIMEOUT_SECONDS,
+    enforce_idle_timeout,
+)
 
 # Load environment variables
 load_dotenv()
@@ -49,6 +55,29 @@ def _reader_cache_size_limit():
         return int(os.environ.get('READER_CACHE_SIZE_LIMIT', DEFAULT_READER_CACHE_SIZE))
     except (TypeError, ValueError):
         return DEFAULT_READER_CACHE_SIZE
+
+
+def _idle_timeout_seconds(explicit=None):
+    """Idle logoff window in seconds (default 30 minutes)."""
+    raw = explicit if explicit is not None else os.environ.get(
+        'IDLE_TIMEOUT_SECONDS', DEFAULT_IDLE_TIMEOUT_SECONDS
+    )
+    try:
+        timeout = int(raw)
+    except (TypeError, ValueError):
+        timeout = DEFAULT_IDLE_TIMEOUT_SECONDS
+    return timeout if timeout > 0 else DEFAULT_IDLE_TIMEOUT_SECONDS
+
+
+def _apply_session_timeout_config(app):
+    """Sliding 30-minute idle sessions for every authenticated user."""
+    timeout = _idle_timeout_seconds(app.config.get('IDLE_TIMEOUT_SECONDS'))
+    app.config['IDLE_TIMEOUT_SECONDS'] = timeout
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=timeout)
+    app.config.setdefault('SESSION_REFRESH_EACH_REQUEST', True)
+    # Ignore leftover year-long remember-me cookies from earlier logins.
+    app.config.setdefault('REMEMBER_COOKIE_NAME', 'remember_token_idle')
+    app.config.setdefault('REMEMBER_COOKIE_DURATION', timedelta(seconds=timeout))
 
 
 # Initialize extensions
@@ -123,7 +152,8 @@ def create_app(test_config=None):
             MAIL_USE_TLS=os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1'],
             MAIL_USERNAME=os.environ.get('MAIL_USERNAME'),
             MAIL_PASSWORD=os.environ.get('MAIL_PASSWORD'),
-            MAIL_DEFAULT_SENDER=os.environ.get('MAIL_DEFAULT_SENDER', os.environ.get('MAIL_USERNAME'))
+            MAIL_DEFAULT_SENDER=os.environ.get('MAIL_DEFAULT_SENDER', os.environ.get('MAIL_USERNAME')),
+            IDLE_TIMEOUT_SECONDS=_idle_timeout_seconds(),
         )
     else:
         app.config.from_mapping(test_config)
@@ -136,6 +166,8 @@ def create_app(test_config=None):
             'READER_CACHE_DIR', os.path.join(app.instance_path, 'reader_cache')
         )
         app.config.setdefault('READER_CACHE_SIZE_LIMIT', DEFAULT_READER_CACHE_SIZE)
+
+    _apply_session_timeout_config(app)
     
     # Ensure instance folder exists
     try:
@@ -168,6 +200,8 @@ def create_app(test_config=None):
     login_manager.login_view = 'auth.login'
     login_manager.login_message = 'Please log in to access this page.'
     login_manager.login_message_category = 'info'
+
+    app.before_request(enforce_idle_timeout)
 
     @app.after_request
     def add_security_headers(response):
@@ -202,9 +236,12 @@ def create_app(test_config=None):
     @login_manager.user_loader
     def load_user(user_id):
         try:
-            return db.session.get(User, int(user_id))
+            user = db.session.get(User, int(user_id))
         except (TypeError, ValueError):
             return None
+        if user is None or not user.is_active:
+            return None
+        return user
 
     @app.template_filter('nl2br')
     def nl2br_filter(value):
@@ -225,6 +262,9 @@ def create_app(test_config=None):
         return {
             'user_theme_preference': theme_pref,
             'csrf_token': generate_csrf(),
+            'idle_timeout_seconds': int(app.config.get(
+                'IDLE_TIMEOUT_SECONDS', DEFAULT_IDLE_TIMEOUT_SECONDS
+            )),
         }
 
     return app

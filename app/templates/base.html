@@ -174,6 +174,8 @@
     <script>
         var currentUserAuthenticated = {% if current_user.is_authenticated %}true{% else %}false{% endif %};
         var userThemePreference = {{ user_theme_preference|tojson }};
+        var idleTimeoutSeconds = {{ idle_timeout_seconds|int }};
+        var logoutUrl = {{ url_for('auth.logout')|tojson }};
     </script>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 

@@ -205,7 +205,36 @@
 
         initCollectionBrowser();
         initDeleteModal();
+        initIdleLogout();
     });
+
+    function initIdleLogout() {
+        if (typeof currentUserAuthenticated === 'undefined' || !currentUserAuthenticated) {
+            return;
+        }
+        var timeoutMs = (
+            typeof idleTimeoutSeconds === 'number' && idleTimeoutSeconds > 0
+                ? idleTimeoutSeconds
+                : 1800
+        ) * 1000;
+        var logoutHref = typeof logoutUrl === 'string' && logoutUrl ? logoutUrl : '/logout';
+        var timer = null;
+
+        function expireSession() {
+            window.location.href = logoutHref;
+        }
+
+        function resetIdleTimer() {
+            clearTimeout(timer);
+            timer = setTimeout(expireSession, timeoutMs);
+        }
+
+        ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click', 'wheel']
+            .forEach(function(eventName) {
+                document.addEventListener(eventName, resetIdleTimer, { passive: true });
+            });
+        resetIdleTimer();
+    }
 
     function initDeleteModal() {
         var deleteModalEl = document.getElementById('deleteModal');

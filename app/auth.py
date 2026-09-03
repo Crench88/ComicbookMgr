@@ -3,13 +3,14 @@ Authentication blueprint for Comic Book Collection Manager.
 Handles user login, logout, and registration functionality.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required, current_user
 from urllib.parse import urlparse
 from . import db
 from .models import User
 from .forms import LoginForm, RegistrationForm, ForgotPasswordForm, ResetPasswordForm, ChangePasswordForm
 from .email import send_password_reset_email, send_password_changed_email
+from .session_timeout import LAST_ACTIVITY_KEY, mark_activity
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -23,12 +24,18 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.check_password(form.password.data):
-            login_user(user, remember=True)
-            next_page = request.args.get('next')
-            if not next_page or urlparse(next_page).netloc != '':
-                next_page = url_for('dashboard.index')
-            flash('Login successful!', 'success')
-            return redirect(next_page)
+            if not user.is_active:
+                flash('This account has been deactivated. Contact an administrator.', 'danger')
+            else:
+                # Sliding 30-minute idle sessions; remember-me would bypass idle logoff.
+                login_user(user, remember=False)
+                session.permanent = True
+                mark_activity()
+                next_page = request.args.get('next')
+                if not next_page or urlparse(next_page).netloc != '':
+                    next_page = url_for('dashboard.index')
+                flash('Login successful!', 'success')
+                return redirect(next_page)
         else:
             flash('Invalid username or password', 'danger')
     
@@ -39,6 +46,7 @@ def login():
 def logout():
     """Handle user logout."""
     logout_user()
+    session.pop(LAST_ACTIVITY_KEY, None)
     flash('You have been logged out.', 'info')
     return redirect(url_for('main.index'))
 
