@@ -77,11 +77,13 @@ def _login(client, user_id):
         sess['_fresh'] = True
 
 
-def _comic_with_cbz(app, client, user_id, pages=3, title='Cached #1'):
+def _comic_with_cbz(app, client, user_id, pages=3, title='Cached #1',
+                    issue_number='1', series=None):
     with app.app_context():
         comic = Comic(
             title=title,
-            issue_number='1',
+            series=series,
+            issue_number=issue_number,
             publisher='Test',
             user_id=user_id,
         )
@@ -268,3 +270,66 @@ class TestContinueReading:
         with cache_app.app_context():
             progress = ReadingProgress.query.filter_by(comic_id=comic_id).one()
             assert progress.page_number == 3
+
+
+class TestReadingQueue:
+    def test_unread_and_next_issue_on_dashboard(self, cache_app, cache_client, cache_user_id):
+        _login(cache_client, cache_user_id)
+        current_id = _comic_with_cbz(
+            cache_app, cache_client, cache_user_id,
+            title='ASM #5', issue_number='5', series='Amazing Spider-Man',
+        )
+        next_id = _comic_with_cbz(
+            cache_app, cache_client, cache_user_id,
+            title='ASM #6', issue_number='6', series='Amazing Spider-Man',
+        )
+        unread_id = _comic_with_cbz(
+            cache_app, cache_client, cache_user_id,
+            title='Daredevil #1', issue_number='1', series='Daredevil',
+        )
+
+        cache_client.post(f'/reader/{current_id}/progress', json={'page': 2})
+
+        resp = cache_client.get('/dashboard')
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert 'Continue Reading' in html
+        assert 'ASM #5' in html
+        assert 'Up Next' in html
+        assert 'ASM #6' in html
+        assert 'After Amazing Spider-Man #5' in html
+        assert 'Unread Digital' in html
+        assert 'Daredevil #1' in html
+        assert f'/reader/{next_id}' in html
+        assert f'/reader/{unread_id}' in html
+
+    def test_finished_next_issue_is_skipped(self, cache_app, cache_client, cache_user_id):
+        _login(cache_client, cache_user_id)
+        current_id = _comic_with_cbz(
+            cache_app, cache_client, cache_user_id,
+            title='Run #1', issue_number='1', series='Run',
+        )
+        _comic_with_cbz(
+            cache_app, cache_client, cache_user_id,
+            title='Run #2', issue_number='2', series='Run', pages=2,
+        )
+        later_id = _comic_with_cbz(
+            cache_app, cache_client, cache_user_id,
+            title='Run #3', issue_number='3', series='Run',
+        )
+
+        with cache_app.app_context():
+            mid = Comic.query.filter_by(user_id=cache_user_id, issue_number='2').one()
+            mid_id = mid.id
+        cache_client.post(f'/reader/{current_id}/progress', json={'page': 2})
+        cache_client.post(f'/reader/{mid_id}/progress', json={'page': 2})
+
+        resp = cache_client.get('/dashboard')
+        html = resp.data.decode()
+        assert 'Up Next' in html
+        assert 'After Run #1' in html
+        assert 'Run #3' in html
+        assert f'/reader/{later_id}' in html
+        up_next = html.split('Up Next', 1)[1].split('Recent Additions', 1)[0]
+        assert 'Run #3' in up_next
+        assert 'Run #2' not in up_next

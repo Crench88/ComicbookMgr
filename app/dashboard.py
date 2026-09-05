@@ -8,7 +8,9 @@ from flask_login import login_required, current_user
 from sqlalchemy import func
 from sqlalchemy.orm import defer, with_expression
 from . import db
-from .models import Comic, ComicFile, ReadingProgress
+from .models import Comic
+from .services.characters import top_characters_for_user
+from .services.reading_queue import dashboard_reading_queues
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -30,22 +32,7 @@ def index():
         Comic.publisher
     ).order_by(func.count(Comic.id).desc()).limit(5).all()
     
-    # Get most frequent characters
-    all_characters = []
-    character_rows = db.session.query(Comic.characters).filter_by(
-        user_id=current_user.id,
-        is_wishlist=False,
-    ).filter(Comic.characters.isnot(None)).all()
-    for (characters,) in character_rows:
-        all_characters.extend([char.strip() for char in characters.split(',')])
-    
-    # Count character frequency
-    character_counts = {}
-    for char in all_characters:
-        if char:
-            character_counts[char] = character_counts.get(char, 0) + 1
-    
-    top_characters = sorted(character_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_characters = top_characters_for_user(current_user.id)
     
     # Get recent additions
     recent_comics = Comic.query.filter_by(
@@ -66,27 +53,7 @@ def index():
         Comic.condition
     ).all()
 
-    continue_reading = db.session.query(
-        Comic, ReadingProgress.page_number, ComicFile.page_count
-    ).join(
-        ReadingProgress,
-        db.and_(
-            ReadingProgress.comic_id == Comic.id,
-            ReadingProgress.user_id == current_user.id,
-        ),
-    ).join(
-        ComicFile, ComicFile.comic_id == Comic.id
-    ).filter(
-        Comic.user_id == current_user.id,
-        ReadingProgress.page_number < ComicFile.page_count,
-    ).options(
-        defer(Comic.cover_image),
-        defer(Comic.additional_covers),
-        with_expression(
-            Comic.cover_available,
-            db.or_(Comic.cover_image_path.isnot(None), Comic.cover_image.isnot(None)),
-        ),
-    ).order_by(ReadingProgress.updated_at.desc()).limit(6).all()
+    queues = dashboard_reading_queues(current_user.id)
 
     return render_template('dashboard/index.html',
                          title='Dashboard',
@@ -96,7 +63,9 @@ def index():
                          top_publishers=top_publishers,
                          top_characters=top_characters,
                          recent_comics=recent_comics,
-                         continue_reading=continue_reading,
+                         continue_reading=queues['continue_reading'],
+                         unread_digital=queues['unread_digital'],
+                         next_in_series=queues['next_in_series'],
                          condition_stats=condition_stats)
 
 @dashboard_bp.route('/profile')

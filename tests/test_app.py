@@ -136,6 +136,26 @@ class TestComics:
         assert response.status_code == 200
         assert b'My Comics' in response.data
 
+    def test_authenticated_nav_is_flattened(self, client, test_user_id):
+        _login_as(client, test_user_id)
+        html = client.get('/comics').get_data(as_text=True)
+        assert 'nav-add-btn' in html
+        assert 'Import Collection' in html
+        assert 'Export Collection' in html
+        assert '>Wishlist</a>' not in html
+        assert 'Wishlist only' in html
+        assert 'Open wishlist' in html
+        assert '>Import</a>' not in html
+        assert '>Export</a>' not in html
+        assert '>Home</a>' not in html
+        assert '>About</a>' in html
+
+    def test_guest_nav_keeps_marketing_links(self, client):
+        html = client.get('/').get_data(as_text=True)
+        assert '>Home</a>' in html
+        assert '>About</a>' in html
+        assert 'nav-add-btn' not in html
+
     def test_comic_back_link_preserves_collection_series(self, client, test_user_id, app):
         with app.app_context():
             comic = Comic(
@@ -436,6 +456,40 @@ class TestEstimatedValueUpdate:
         assert 'comic-enrich.js' in page
         assert 'Enrich comic' in page
         assert 'id="refreshComicVineShowBtn"' in page
+        assert 'comic-show-facts' in page
+        assert 'Catalog &amp; record' in page or 'Catalog & record' in page
+        assert 'Basic Information' not in page
+
+    def test_show_page_keeps_long_description_and_splits_cover_list(self, client, test_user_id, app):
+        story = (
+            'Tony Stark is dead? Or is he? Who are his biological parents? '
+            'The quest begins here!'
+        )
+        description = (
+            f'{story} List of covers and their creators: Cover Name Creator(s) Variant A'
+        )
+        with app.app_context():
+            comic = Comic(
+                title='Powerless',
+                series='Powerless',
+                issue_number='2',
+                publisher='Marvel',
+                description=description,
+                cover_artist='Adi Granov, Alex Maleev, Brian Stelfreeze',
+                user_id=test_user_id,
+            )
+            db.session.add(comic)
+            db.session.commit()
+            comic_id = comic.id
+
+        _login_as(client, test_user_id)
+        page = client.get(f'/comics/{comic_id}').get_data(as_text=True)
+        assert 'The quest begins here!' in page
+        assert 'Cover credits from ComicVine' in page
+        assert 'comic-show-description' in page
+        assert 'comic-show-credit-names' in page
+        assert 'Adi Granov' in page
+        assert 'syncDetailsHeight' not in page
 
     def test_add_form_includes_enrich_button(self, client, test_user_id):
         _login_as(client, test_user_id)
@@ -651,7 +705,7 @@ class TestComicCoverVariants:
         with app.app_context():
             comic = db.session.get(Comic, comic_id)
             assert comic.cover_image == PRIMARY_COVER_BYTES
-            assert comic.get_additional_covers()[0]['blob_data'] == alternate
+            assert comic.get_additional_covers(include_blob=True)[0]['blob_data'] == alternate
 
     def test_set_primary_cover_promotes_variant(self, client, test_user_id, app):
         import base64
@@ -691,7 +745,7 @@ class TestComicCoverVariants:
             comic = db.session.get(Comic, comic_id)
             assert comic.cover_image == ALTERNATE_COVER_BYTES
             assert len(comic.get_additional_covers()) == 1
-            assert comic.get_additional_covers()[0]['blob_data'] == base64.b64encode(PRIMARY_COVER_BYTES).decode('utf-8')
+            assert comic.get_additional_covers(include_blob=True)[0]['blob_data'] == base64.b64encode(PRIMARY_COVER_BYTES).decode('utf-8')
 
         response = client.get(f'/comics/{comic_id}/covers/{cover_id}/image')
         # After promotion the old cover id is gone; new alternate should still serve.
@@ -707,10 +761,11 @@ class TestComicCoverVariants:
 
         response = client.get(f'/comics/{comic_id}/cover/thumbnail')
         assert response.status_code == 200
-        assert response.content_type == 'image/jpeg'
+        assert response.content_type == 'image/webp'
         with Image.open(BytesIO(response.data)) as thumbnail:
-            assert thumbnail.width <= 360
-            assert thumbnail.height <= 480
+            assert thumbnail.format == 'WEBP'
+            assert thumbnail.width <= 300
+            assert thumbnail.height <= 400
 
     def test_edit_swap_primary_and_store_alternates(self, client, test_user_id, app):
         import base64
@@ -758,7 +813,7 @@ class TestComicCoverVariants:
         with app.app_context():
             comic = db.session.get(Comic, comic_id)
             assert comic.cover_image == ALTERNATE_COVER_BYTES
-            alternates = comic.get_additional_covers()
+            alternates = comic.get_additional_covers(include_blob=True)
             assert len(alternates) == 1
             assert alternates[0]['blob_data'] == primary_blob
 

@@ -7,18 +7,18 @@ from io import BytesIO
 from flask import (
     current_app,
     flash,
+    jsonify,
     make_response,
     request,
     url_for,
 )
-from PIL import Image, ImageOps
+from PIL import Image
 from sqlalchemy import Float, case, cast, func
 from sqlalchemy.orm import defer, with_expression
 from werkzeug.utils import secure_filename
 
 from .. import db
-from ..models import Comic, ComicCover
-from ..services.cache import cache_get, cache_set
+from ..models import Comic, ComicCover, Series
 
 
 SERIES_PER_PAGE = 50
@@ -263,6 +263,35 @@ def _series_label(comic_series):
     return 'Unknown Series'
 
 
+def _catalog_display_name_sql():
+    """SQL equivalent of Series.display_name (name + optional Vol. N)."""
+    volume = func.nullif(func.trim(Series.volume), '')
+    name = func.trim(Series.name)
+    return case(
+        (Series.id.is_(None), None),
+        (volume.is_(None), name),
+        (
+            func.lower(volume).like('vol%'),
+            name + ' ' + volume,
+        ),
+        else_=name + ' Vol. ' + volume,
+    )
+
+
+def _series_group_sql():
+    """
+    Label used by the collection sidebar and return URLs.
+
+    Prefer the linked catalog display name so Comic.series free-text cannot
+    split a run across two sidebar rows.
+    """
+    return func.coalesce(
+        func.nullif(_catalog_display_name_sql(), ''),
+        func.nullif(func.trim(Comic.series), ''),
+        'Unknown Series',
+    )
+
+
 def _issue_sort_key(comic):
     """Sort comics within a series by issue number (numeric first, then suffix)."""
     issue = (comic.issue_number or '').strip()
@@ -302,14 +331,13 @@ def _filter_series_query(user_id, search_query='', publisher_filter='',
                          condition_filter='', genre_filter='', wishlist_only=False,
                          tag_filter='', read_status_filter=''):
     """Return a query of (series_name, issue_count) rows for the filtered collection."""
-    series_name = func.coalesce(
-        func.nullif(func.trim(Comic.series), ''),
-        'Unknown Series',
-    ).label('series_name')
+    series_name = _series_group_sql().label('series_name')
 
     query = db.session.query(
         series_name,
         func.count(Comic.id).label('issue_count'),
+    ).select_from(Comic).outerjoin(
+        Series, Comic.series_id == Series.id,
     ).filter(Comic.user_id == user_id)
 
     query = _apply_comic_filters(
@@ -333,17 +361,16 @@ def _comics_for_series_query(user_id, series_name, search_query='', publisher_fi
             Comic.cover_available,
             db.or_(Comic.cover_image_path.isnot(None), Comic.cover_image.isnot(None)),
         ),
-    ).filter_by(user_id=user_id)
+    ).outerjoin(
+        Series, Comic.series_id == Series.id,
+    ).filter(Comic.user_id == user_id)
     query = _apply_comic_filters(
         query, search_query, publisher_filter,
         condition_filter, genre_filter, wishlist_only,
         tag_filter, read_status_filter,
     )
 
-    if series_name == 'Unknown Series':
-        query = query.filter(db.or_(Comic.series.is_(None), func.trim(Comic.series) == ''))
-    else:
-        query = query.filter(func.trim(Comic.series) == series_name)
+    query = query.filter(_series_group_sql() == series_name)
 
     issue_numeric = case(
         (Comic.issue_number.op('GLOB')('[0-9]*'), cast(Comic.issue_number, Float)),
@@ -436,31 +463,11 @@ def _cover_blob_response(image_data, mime_type):
     return response.make_conditional(request)
 
 
-def _cover_thumbnail_response(image_data):
-    """Return a cached, bandwidth-friendly JPEG cover thumbnail."""
-    import hashlib
+def _cover_thumbnail_response(image_data, relative_path=None):
+    """Return a persisted or on-the-fly WebP cover thumbnail."""
+    from ..services.cover_storage import send_cover_thumbnail_response
 
-    digest = hashlib.sha256(image_data).hexdigest()
-    cache_key = f'cover-thumb:{digest}:360x480:v1'
-    thumbnail = cache_get(cache_key)
-
-    if thumbnail is None:
-        with Image.open(BytesIO(image_data)) as source:
-            image = ImageOps.exif_transpose(source)
-            image.thumbnail((360, 480), Image.Resampling.LANCZOS)
-            if image.mode not in ('RGB', 'L'):
-                background = Image.new('RGB', image.size, 'white')
-                if 'A' in image.getbands():
-                    background.paste(image, mask=image.getchannel('A'))
-                else:
-                    background.paste(image)
-                image = background
-            elif image.mode == 'L':
-                image = image.convert('RGB')
-
-            output = BytesIO()
-            image.save(output, format='JPEG', quality=82, optimize=True)
-            thumbnail = output.getvalue()
-        cache_set(cache_key, thumbnail, ttl=7 * 24 * 60 * 60)
-
-    return _cover_blob_response(thumbnail, 'image/jpeg')
+    response = send_cover_thumbnail_response(relative_path, image_data)
+    if response is None:
+        return jsonify({'error': 'No cover image found'}), 404
+    return response

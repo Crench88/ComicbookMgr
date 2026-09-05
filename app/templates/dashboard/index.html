@@ -125,6 +125,74 @@
 </div>
 {% endif %}
 
+{% if next_in_series %}
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-skip-forward text-primary"></i>
+        <span>Up Next</span>
+    </div>
+    <div class="card-body">
+        <div class="comic-grid">
+            {% for current, nxt in next_in_series %}
+            <article class="comic-card">
+                <div class="comic-card-cover">
+                    {% if nxt.has_cover_image() %}
+                    <img src="{{ url_for('comics.serve_cover_thumbnail', id=nxt.id, v=nxt.cover_version()) }}"
+                         alt="{{ nxt.title }} cover">
+                    {% else %}
+                    <i class="bi bi-image text-muted" style="font-size: 2.5rem;"></i>
+                    {% endif %}
+                </div>
+                <div class="comic-card-body">
+                    <h6 class="comic-card-title">{{ nxt.title }} #{{ nxt.issue_number }}</h6>
+                    <p class="text-muted small mb-0">After {{ current.series_label }} #{{ current.issue_number }}</p>
+                </div>
+                <div class="card-footer border-0 pt-0 pb-3 px-3">
+                    <a href="{{ url_for('reader.read', comic_id=nxt.id) }}" class="btn btn-sm btn-primary w-100">
+                        <i class="bi bi-book"></i> Read next
+                    </a>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if unread_digital %}
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-collection-play text-info"></i>
+        <span>Unread Digital</span>
+    </div>
+    <div class="card-body">
+        <div class="comic-grid">
+            {% for comic in unread_digital %}
+            <article class="comic-card">
+                <div class="comic-card-cover">
+                    {% if comic.has_cover_image() %}
+                    <img src="{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=comic.cover_version()) }}"
+                         alt="{{ comic.title }} cover">
+                    {% else %}
+                    <i class="bi bi-image text-muted" style="font-size: 2.5rem;"></i>
+                    {% endif %}
+                </div>
+                <div class="comic-card-body">
+                    <h6 class="comic-card-title">{{ comic.title }} #{{ comic.issue_number }}</h6>
+                    <p class="text-muted small mb-0">{{ comic.series_label }}</p>
+                </div>
+                <div class="card-footer border-0 pt-0 pb-3 px-3">
+                    <a href="{{ url_for('reader.read', comic_id=comic.id) }}" class="btn btn-sm btn-outline-primary w-100">
+                        <i class="bi bi-play-fill"></i> Start reading
+                    </a>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-2">

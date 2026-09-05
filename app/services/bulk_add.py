@@ -8,6 +8,7 @@ from datetime import datetime
 import requests
 
 from ..models import Comic
+from .characters import sync_character_mentions
 from .series_link import apply_series_link
 from .cover_storage import persist_primary_cover
 from .. import db
@@ -250,6 +251,7 @@ def add_comic_from_search_result(*, result: dict, user_id: int, condition: str =
     db.session.flush()
     if cover_data:
         persist_primary_cover(comic, cover_data[0], cover_data[1])
+    sync_character_mentions(comic)
     db.session.commit()
     return comic
 

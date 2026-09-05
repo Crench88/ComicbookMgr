@@ -3,9 +3,11 @@
 {% block title %}{{ comic.title }} #{{ comic.issue_number }}{% endblock %}
 
 {% block content %}
-<div class="row comic-show-layout">
-    <!-- Comic Cover -->
-    <div class="col-md-4 mb-4">
+{% from "comics/partials/_ownership_sliders.html" import ownership_sliders, ownership_status_badges %}
+{% set cover_summaries = comic.list_cover_summaries() %}
+{% set credits = comic.credits() %}
+<div class="row g-4 comic-show-layout">
+    <div class="col-lg-4">
         <div class="card" id="comicSidebarCard">
             {% if comic.has_cover_image() %}
             {% if comic.has_digital_file() %}
@@ -13,87 +15,109 @@
                class="comic-cover-read-link d-block"
                title="Open reader">
                 <img src="{{ url_for('comics.serve_cover_image', id=comic.id, v=comic.cover_version()) }}"
-                     class="card-img-top" alt="{{ comic.title }}"
-                     style="max-height: 500px; object-fit: contain;">
+                     class="card-img-top" alt="{{ comic.title }}">
             </a>
             {% else %}
             <img src="{{ url_for('comics.serve_cover_image', id=comic.id, v=comic.cover_version()) }}"
-                 class="card-img-top" alt="{{ comic.title }}"
-                 style="max-height: 500px; object-fit: contain;">
+                 class="card-img-top" alt="{{ comic.title }}">
             {% endif %}
             {% else %}
-            <div class="card-img-top bg-light d-flex align-items-center justify-content-center"
-                 style="height: 500px;">
-                <i class="bi bi-image text-muted display-1"></i>
+            <div class="comic-show-cover-placeholder">
+                <i class="bi bi-image"></i>
             </div>
             {% endif %}
-            
+
             <div class="card-body">
                 <div class="d-grid gap-2">
                     {% if comic.has_digital_file() %}
-                    <a href="{{ url_for('reader.read', comic_id=comic.id) }}" class="btn btn-success">
+                    <a href="{{ url_for('reader.read', comic_id=comic.id) }}" class="btn btn-primary">
                         <i class="bi bi-book"></i> Read
                         {% if comic.digital_file.page_count %}
                         <span class="badge text-bg-light text-dark ms-1">{{ comic.digital_file.page_count }}p</span>
                         {% endif %}
                     </a>
-                    {% endif %}
+                    <a href="{{ url_for('comics.edit', id=comic.id, next=collection_return_url) }}" class="btn btn-outline-primary">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                    {% else %}
                     <a href="{{ url_for('comics.edit', id=comic.id, next=collection_return_url) }}" class="btn btn-primary">
-                        <i class="bi bi-pencil"></i> Edit Comic
+                        <i class="bi bi-pencil"></i> Edit
                     </a>
-                    <button type="button" class="btn btn-outline-danger delete-comic-btn"
-                            data-comic-id="{{ comic.id }}"
-                            data-comic-title="{{ comic.title|e }}">
-                        <i class="bi bi-trash"></i> Delete Comic
-                    </button>
-                    <a href="{{ collection_return_url }}" class="btn btn-outline-secondary">
-                        <i class="bi bi-arrow-left"></i> Back to Collection
-                    </a>
+                    {% endif %}
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-danger delete-comic-btn flex-fill"
+                                data-comic-id="{{ comic.id }}"
+                                data-comic-title="{{ comic.title|e }}">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
+                        <a href="{{ collection_return_url }}" class="btn btn-outline-secondary flex-fill">
+                            <i class="bi bi-arrow-left"></i> Back
+                        </a>
+                    </div>
                 </div>
 
-                <hr class="my-3">
-                <h6 class="mb-2"><i class="bi bi-file-zip"></i> Digital file</h6>
                 {% if comic.has_digital_file() %}
-                <p class="small text-muted mb-2">
-                    {{ comic.digital_file.original_filename }}
-                    · {{ comic.digital_file.format|upper }}
-                    · {{ comic.digital_file.page_count }} pages
-                    · {{ '%.1f'|format((comic.digital_file.file_size or 0) / 1048576) }} MB
-                </p>
-                <form method="POST" action="{{ url_for('reader.delete_file', comic_id=comic.id) }}" class="mb-2"
-                      onsubmit="return confirm('Remove the digital file from this comic?');">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-sm btn-outline-secondary w-100">
-                        <i class="bi bi-x-circle"></i> Remove file
-                    </button>
-                </form>
+                <details class="comic-show-disclosure mt-3">
+                    <summary>Digital file</summary>
+                    <p class="small text-muted mb-2">
+                        {{ comic.digital_file.original_filename }}
+                        · {{ comic.digital_file.format|upper }}
+                        · {{ comic.digital_file.page_count }} pages
+                        · {{ '%.1f'|format((comic.digital_file.file_size or 0) / 1048576) }} MB
+                    </p>
+                    <form method="POST" action="{{ url_for('reader.delete_file', comic_id=comic.id) }}" class="mb-2"
+                          onsubmit="return confirm('Remove the digital file from this comic?');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary w-100">
+                            <i class="bi bi-x-circle"></i> Remove file
+                        </button>
+                    </form>
+                    <form method="POST" action="{{ url_for('reader.upload_file', comic_id=comic.id) }}"
+                          enctype="multipart/form-data" class="d-grid gap-2">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="file" name="digital_file" accept=".cbz,.zip,.cbr,.rar" class="form-control form-control-sm" required>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-upload"></i> Replace file
+                        </button>
+                    </form>
+                    {% if rar_support_problem %}
+                    <p class="small text-muted mt-2 mb-0">
+                        <i class="bi bi-info-circle"></i> {{ rar_support_problem }}
+                    </p>
+                    {% endif %}
+                </details>
                 {% else %}
-                <p class="small text-muted mb-2">No digital file attached yet.</p>
-                {% endif %}
-                <form method="POST" action="{{ url_for('reader.upload_file', comic_id=comic.id) }}"
-                      enctype="multipart/form-data" class="d-grid gap-2">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <input type="file" name="digital_file" accept=".cbz,.zip,.cbr,.rar" class="form-control form-control-sm" required>
-                    <button type="submit" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-upload"></i>
-                        {% if comic.has_digital_file() %}Replace file{% else %}Upload CBZ / CBR{% endif %}
-                    </button>
-                </form>
-                {% if rar_support_problem %}
-                <p class="small text-muted mt-2 mb-0">
-                    <i class="bi bi-info-circle"></i> {{ rar_support_problem }}
-                </p>
+                <div class="mt-3">
+                    <p class="small text-muted mb-2">No digital file yet.</p>
+                    <form method="POST" action="{{ url_for('reader.upload_file', comic_id=comic.id) }}"
+                          enctype="multipart/form-data" class="d-grid gap-2">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="file" name="digital_file" accept=".cbz,.zip,.cbr,.rar" class="form-control form-control-sm" required>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-upload"></i> Upload CBZ / CBR
+                        </button>
+                    </form>
+                    {% if rar_support_problem %}
+                    <p class="small text-muted mt-2 mb-0">
+                        <i class="bi bi-info-circle"></i> {{ rar_support_problem }}
+                    </p>
+                    {% endif %}
+                </div>
                 {% endif %}
             </div>
         </div>
     </div>
-    
-    <!-- Comic Details -->
-    <div class="col-md-8">
+
+    <div class="col-lg-8">
         <div class="card comic-show-details-card" id="comicDetailsCard">
             <div class="card-header">
-                <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-                    <h2 class="card-title mb-0">{{ comic.title }} #{{ comic.issue_number }}</h2>
+                <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                    <div>
+                        <h2 class="card-title mb-1">{{ comic.title }} #{{ comic.issue_number }}</h2>
+                        {% if comic.series_label %}
+                        <p class="text-muted small mb-0">{{ comic.series_label }}</p>
+                        {% endif %}
+                    </div>
                     <div class="d-flex gap-2 flex-wrap align-items-center justify-content-end">
                         <button type="button"
                                 class="btn btn-sm btn-outline-primary"
@@ -107,9 +131,7 @@
                                 title="ComicVine metadata, cover barcode scan, and eBay market value">
                             <i class="bi bi-magic"></i> Enrich comic
                         </button>
-                        {% for tag in comic.ownership_status_tags() %}
-                        <span class="badge {{ tag.class }}">{{ tag.label }}</span>
-                        {% endfor %}
+                        {{ ownership_status_badges(comic) }}
                         <span class="badge {% if comic.read_status == 'read' %}bg-success{% elif comic.read_status == 'reading' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
                             {{ comic.read_status_label }}
                         </span>
@@ -118,136 +140,61 @@
                 <div id="refreshComicVineShowStatus" class="alert d-none mt-2 mb-0 py-2 small" role="alert"></div>
             </div>
             <div class="card-body comic-show-details-body" id="comicDetailsBody">
-                <div class="row">
-                    <div class="col-md-6">
-                        <h5>Basic Information</h5>
-                        <dl class="row">
-                            <dt class="col-sm-4">Publisher:</dt>
-                            <dd class="col-sm-8">{{ comic.publisher }}</dd>
+                <ul class="comic-show-facts">
+                    <li><span>Publisher</span>{{ comic.publisher }}</li>
+                    <li><span>Released</span>{{ comic.get_formatted_release_date() }}</li>
+                    <li><span>Condition</span>{{ comic.condition or 'Not specified' }}</li>
+                    <li>
+                        <span>Value</span>
+                        <span class="badge bg-success" id="comicEstimatedValueBadge">{{ comic.get_formatted_value() }}</span>
+                    </li>
+                    {% if comic.genre %}
+                    <li><span>Genre</span>{{ comic.genre }}</li>
+                    {% endif %}
+                </ul>
 
-                            <dt class="col-sm-4">Read Status:</dt>
-                            <dd class="col-sm-8">{{ comic.read_status_label }}</dd>
-
-                            <dt class="col-sm-4">Tags:</dt>
-                            <dd class="col-sm-8">
-                                {% if comic.tags %}
-                                    {% for tag in comic.tags|sort(attribute='name') %}
-                                    <a href="{{ url_for('comics.index', tag=tag.name) }}" class="badge rounded-pill text-bg-light border text-decoration-none me-1">{{ tag.name }}</a>
-                                    {% endfor %}
-                                {% else %}
-                                    <span class="text-muted">None</span>
-                                {% endif %}
-                            </dd>
-                            
-                            <dt class="col-sm-4">Genre:</dt>
-                            <dd class="col-sm-8">{{ comic.genre or 'Not specified' }}</dd>
-                            
-                            <dt class="col-sm-4">UPC Code:</dt>
-                            <dd class="col-sm-8">
-                                <div class="d-flex flex-wrap align-items-center gap-2">
-                                    <span id="comicUpcValue">{{ comic.upc or 'Not specified' }}</span>
-                                    {% if comic.has_cover_image() %}
-                                    <button type="button"
-                                            class="btn btn-sm btn-outline-primary"
-                                            id="scanCoverBarcodeBtn"
-                                            data-comic-id="{{ comic.id }}"
-                                            data-existing-upc="{{ comic.upc or '' }}">
-                                        <i class="bi bi-upc-scan"></i> Scan from Cover
-                                    </button>
-                                    {% endif %}
-                                </div>
-                                <div id="scanCoverBarcodeStatus" class="small mt-1 d-none"></div>
-                            </dd>
-                            
-                            <dt class="col-sm-4">Release Date:</dt>
-                            <dd class="col-sm-8">{{ comic.get_formatted_release_date() }}</dd>
-                            
-                            <dt class="col-sm-4">Condition:</dt>
-                            <dd class="col-sm-8">
-                                {% if comic.condition %}
-                                <span class="badge bg-secondary">{{ comic.condition }}</span>
-                                {% else %}
-                                Not specified
-                                {% endif %}
-                            </dd>
-                        </dl>
-                    </div>
-                    
-                    <div class="col-md-6">
-                        <h5>Value & Status</h5>
-                        <dl class="row mb-0">
-                            <dt class="col-sm-4">Estimated Value:</dt>
-                            <dd class="col-sm-8">
-                                <div class="d-flex flex-wrap align-items-center gap-2">
-                                    <span class="badge bg-success fs-6" id="comicEstimatedValueBadge">{{ comic.get_formatted_value() }}</span>
-                                    <button type="button"
-                                            class="btn btn-sm btn-outline-primary"
-                                            id="showValueLookupBtn"
-                                            title="Look up market value from eBay Canada"
-                                            data-comic-id="{{ comic.id }}"
-                                            data-series="{{ comic.series_label|e }}"
-                                            data-title="{{ comic.title|e }}"
-                                            data-issue-number="{{ (comic.issue_number or '')|e }}"
-                                            data-publisher="{{ (comic.publisher or '')|e }}"
-                                            data-condition="{{ (comic.condition or '')|e }}">
-                                        <i class="bi bi-graph-up"></i> Look up value
-                                    </button>
-                                </div>
-                                <div id="showValueEstimateHost" class="mt-2"></div>
-                            </dd>
-                            
-                            <dt class="col-sm-4">Added:</dt>
-                            <dd class="col-sm-8">{{ comic.created_at.strftime('%B %d, %Y') }}</dd>
-                            
-                            <dt class="col-sm-4">Last Updated:</dt>
-                            <dd class="col-sm-8">{{ comic.updated_at.strftime('%B %d, %Y') }}</dd>
-                            
-                            <dt class="col-sm-4">Status:</dt>
-                            <dd class="col-sm-8">
-                                {% from "comics/partials/_ownership_sliders.html" import ownership_sliders, ownership_status_badges %}
-                                <div class="mb-2">
-                                    {{ ownership_status_badges(comic) }}
-                                </div>
-                                {{ ownership_sliders(
-                                    in_collection_id='showInCollection',
-                                    digital_id='showIsDigital',
-                                    in_collection_checked=comic.in_collection,
-                                    digital_checked=comic.is_digital or comic.has_digital_file(),
-                                    compact=True
-                                ) }}
-                                <div id="showOwnershipStatus" class="small mt-1 text-muted d-none"></div>
-                            </dd>
-                        </dl>
-                    </div>
+                {% if comic.tags %}
+                <div class="comic-show-tags">
+                    {% for tag in comic.tags|sort(attribute='name') %}
+                    <a href="{{ url_for('comics.index', tag=tag.name) }}" class="badge rounded-pill text-bg-light border text-decoration-none">{{ tag.name }}</a>
+                    {% endfor %}
                 </div>
-                
+                {% endif %}
+
+                {% if credits %}
+                <section class="comic-show-section">
+                    <h3>Creative Team</h3>
+                    <dl class="row mb-0 gy-1">
+                        {% for label, names in credits %}
+                        <dt class="col-sm-3">{{ label }}</dt>
+                        <dd class="col-sm-9 mb-0">
+                            <div class="comic-show-credit-names">
+                                {% for name in names.split(',') %}
+                                {% if name.strip() %}
+                                <span>{{ name.strip() }}</span>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                        </dd>
+                        {% endfor %}
+                    </dl>
+                </section>
+                {% endif %}
+
                 {% if comic.characters %}
-                <div class="mt-4">
-                    <h5>Characters</h5>
+                <section class="comic-show-section">
+                    <h3>Characters</h3>
                     <div class="d-flex flex-wrap gap-2">
                         {% for character in comic.get_characters_list() %}
                         <span class="badge bg-primary">{{ character.strip() }}</span>
                         {% endfor %}
                     </div>
-                </div>
-                {% endif %}
-
-                {% set credits = comic.credits() %}
-                {% if credits %}
-                <div class="mt-4">
-                    <h5>Creative Team</h5>
-                    <dl class="row mb-0 gy-1">
-                        {% for label, names in credits %}
-                        <dt class="col-sm-3">{{ label }}</dt>
-                        <dd class="col-sm-9 mb-0">{{ names }}</dd>
-                        {% endfor %}
-                    </dl>
-                </div>
+                </section>
                 {% endif %}
 
                 {% if comic.teams or comic.story_arc %}
-                <div class="mt-4">
-                    <h5>Story Context</h5>
+                <section class="comic-show-section">
+                    <h3>Story</h3>
                     <dl class="row mb-0">
                         {% if comic.story_arc %}
                         <dt class="col-sm-3">Story Arc</dt>
@@ -258,94 +205,139 @@
                         <dd class="col-sm-9">{{ comic.teams }}</dd>
                         {% endif %}
                     </dl>
-                </div>
+                </section>
                 {% endif %}
 
                 {% if comic.description %}
-                <div class="mt-4">
-                    <h5>Description</h5>
-                    <div class="card bg-light">
-                        <div class="card-body">
-                            {{ comic.description|nl2br }}
-                        </div>
-                    </div>
-                </div>
+                {% set cover_marker = 'List of covers and their creators' %}
+                {% set desc_parts = comic.description.split(cover_marker, 1) %}
+                <section class="comic-show-section">
+                    <h3>Description</h3>
+                    <div class="comic-show-description">{{ desc_parts[0]|trim|nl2br }}</div>
+                    {% if desc_parts|length > 1 and desc_parts[1]|trim %}
+                    <details class="comic-show-disclosure">
+                        <summary>Cover credits from ComicVine</summary>
+                        <div class="comic-show-description">{{ (cover_marker ~ desc_parts[1])|nl2br }}</div>
+                    </details>
+                    {% endif %}
+                </section>
                 {% endif %}
 
-                {% if comic.comicvine_url %}
-                <div class="mt-3">
-                    <a href="{{ comic.comicvine_url }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">
-                        <i class="bi bi-box-arrow-up-right"></i> View on ComicVine
-                    </a>
-                </div>
-                {% endif %}
-                
-                {% if comic.notes %}
-                <div class="mt-4">
-                    <h5>Notes</h5>
-                    <div class="card bg-light">
-                        <div class="card-body">
-                            {{ comic.notes|nl2br }}
+                {% if cover_summaries|length > 1 %}
+                <section class="comic-show-section" id="comicCoverGalleryCard">
+                    <h3>Cover variants</h3>
+                    <p class="small text-muted mb-2">Click an alternate cover to set it as primary.</p>
+                    <div class="row g-3" id="coverVariantsGrid">
+                        {% for cover in cover_summaries %}
+                        <div class="col-6 col-md-4 col-xl-3">
+                            <div class="position-relative comic-cover-variant{% if not cover.is_primary %} comic-cover-variant-clickable{% endif %}">
+                                {% if cover.is_primary %}
+                                <img src="{{ cover.thumbnail_url or url_for('comics.serve_cover_thumbnail', id=comic.id, v=cover.version) }}"
+                                     class="img-thumbnail cover-variant-thumb w-100"
+                                     alt="{{ cover.label }}"
+                                     title="Primary cover">
+                                {% else %}
+                                <img src="{{ cover.thumbnail_url or url_for('comics.serve_cover_variant_thumbnail', id=comic.id, cover_id=cover.id, v=cover.version) }}"
+                                     class="img-thumbnail cover-variant-thumb w-100"
+                                     alt="{{ cover.label }}"
+                                     data-cover-id="{{ cover.id }}"
+                                     data-cover-label="{{ cover.label|e }}"
+                                     onclick="switchPrimaryCover(this.dataset.coverId, this.dataset.coverLabel)"
+                                     title="Click to set as primary cover">
+                                {% endif %}
+                                {% if cover.is_primary %}
+                                <div class="position-absolute top-0 start-0 bg-primary text-white px-2 py-1 small rounded-end">
+                                    Primary
+                                </div>
+                                {% else %}
+                                <button type="button"
+                                        class="btn btn-sm btn-primary position-absolute bottom-0 start-0 end-0 m-2"
+                                        data-cover-id="{{ cover.id }}"
+                                        data-cover-label="{{ cover.label|e }}"
+                                        onclick="switchPrimaryCover(this.dataset.coverId, this.dataset.coverLabel)">
+                                    Set as Primary
+                                </button>
+                                {% endif %}
+                            </div>
+                            <small class="d-block text-center mt-2">{{ cover.label }}</small>
                         </div>
+                        {% endfor %}
                     </div>
-                </div>
+                </section>
                 {% endif %}
+
+                <details class="comic-show-disclosure">
+                    <summary>Collection &amp; market</summary>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary"
+                                id="showValueLookupBtn"
+                                title="Look up market value from eBay Canada"
+                                data-comic-id="{{ comic.id }}"
+                                data-series="{{ comic.series_label|e }}"
+                                data-title="{{ comic.title|e }}"
+                                data-issue-number="{{ (comic.issue_number or '')|e }}"
+                                data-publisher="{{ (comic.publisher or '')|e }}"
+                                data-condition="{{ (comic.condition or '')|e }}">
+                            <i class="bi bi-graph-up"></i> Look up value
+                        </button>
+                    </div>
+                    <div id="showValueEstimateHost" class="mb-3"></div>
+                    {{ ownership_sliders(
+                        in_collection_id='showInCollection',
+                        digital_id='showIsDigital',
+                        in_collection_checked=comic.in_collection,
+                        digital_checked=comic.is_digital or comic.has_digital_file(),
+                        compact=True
+                    ) }}
+                    <div id="showOwnershipStatus" class="small mt-1 text-muted d-none"></div>
+                    <div class="mt-3">
+                        <div class="small text-muted mb-1">UPC</div>
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <span id="comicUpcValue">{{ comic.upc or 'Not specified' }}</span>
+                            {% if comic.has_cover_image() %}
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-primary"
+                                    id="scanCoverBarcodeBtn"
+                                    data-comic-id="{{ comic.id }}"
+                                    data-existing-upc="{{ comic.upc or '' }}">
+                                <i class="bi bi-upc-scan"></i> Scan from Cover
+                            </button>
+                            {% endif %}
+                        </div>
+                        <div id="scanCoverBarcodeStatus" class="small mt-1 d-none"></div>
+                    </div>
+                </details>
+
+                <details class="comic-show-disclosure">
+                    <summary>Catalog &amp; record</summary>
+                    <dl class="row mb-0 small">
+                        {% if comic.comicvine_issue_id %}
+                        <dt class="col-sm-4">ComicVine issue ID</dt>
+                        <dd class="col-sm-8">{{ comic.comicvine_issue_id }}</dd>
+                        {% endif %}
+                        {% if comic.comicvine_url %}
+                        <dt class="col-sm-4">ComicVine</dt>
+                        <dd class="col-sm-8">
+                            <a href="{{ comic.comicvine_url }}" target="_blank" rel="noopener">
+                                View on ComicVine <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        </dd>
+                        {% endif %}
+                        <dt class="col-sm-4">Added</dt>
+                        <dd class="col-sm-8">{{ comic.created_at.strftime('%B %d, %Y') }}</dd>
+                        <dt class="col-sm-4">Last updated</dt>
+                        <dd class="col-sm-8">{{ comic.updated_at.strftime('%B %d, %Y') }}</dd>
+                        {% if comic.notes %}
+                        <dt class="col-sm-4">Notes</dt>
+                        <dd class="col-sm-8">{{ comic.notes|nl2br }}</dd>
+                        {% endif %}
+                    </dl>
+                </details>
             </div>
         </div>
     </div>
 </div>
-
-{% set cover_summaries = comic.list_cover_summaries() %}
-{% if cover_summaries|length > 1 %}
-<div class="card mt-3" id="comicCoverGalleryCard">
-    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <h6 class="mb-0"><i class="bi bi-images"></i> All Cover Images</h6>
-        <small class="text-muted mb-0">
-            <i class="bi bi-info-circle"></i> Click any alternate cover to set it as the primary image
-        </small>
-    </div>
-    <div class="card-body">
-        <div class="row g-3" id="coverVariantsGrid">
-            {% for cover in cover_summaries %}
-            <div class="col-6 col-md-3 col-xl-2">
-                <div class="position-relative comic-cover-variant{% if not cover.is_primary %} comic-cover-variant-clickable{% endif %}">
-                    {% if cover.is_primary %}
-                    <img src="{{ url_for('comics.serve_cover_thumbnail', id=comic.id, v=cover.version) }}"
-                         class="img-thumbnail cover-variant-thumb w-100"
-                         alt="{{ cover.label }}"
-                         style="height: 220px; object-fit: cover;"
-                         title="Primary cover">
-                    {% else %}
-                    <img src="{{ url_for('comics.serve_cover_variant_thumbnail', id=comic.id, cover_id=cover.id, v=cover.version) }}"
-                         class="img-thumbnail cover-variant-thumb w-100"
-                         alt="{{ cover.label }}"
-                         style="height: 220px; object-fit: cover; cursor: pointer;"
-                         data-cover-id="{{ cover.id }}"
-                         data-cover-label="{{ cover.label|e }}"
-                         onclick="switchPrimaryCover(this.dataset.coverId, this.dataset.coverLabel)"
-                         title="Click to set as primary cover">
-                    {% endif %}
-                    {% if cover.is_primary %}
-                    <div class="position-absolute top-0 start-0 bg-primary text-white px-2 py-1 small rounded-end">
-                        Primary
-                    </div>
-                    {% else %}
-                    <button type="button"
-                            class="btn btn-sm btn-primary position-absolute bottom-0 start-0 end-0 m-2"
-                            data-cover-id="{{ cover.id }}"
-                            data-cover-label="{{ cover.label|e }}"
-                            onclick="switchPrimaryCover(this.dataset.coverId, this.dataset.coverLabel)">
-                        Set as Primary
-                    </button>
-                    {% endif %}
-                </div>
-                <small class="d-block text-center mt-2">{{ cover.label }}</small>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-</div>
-{% endif %}
 
 <!-- Delete Confirmation Modal -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
@@ -377,34 +369,6 @@
 <script>
 
 document.addEventListener('DOMContentLoaded', function () {
-    const sidebarCard = document.getElementById('comicSidebarCard');
-    const detailsCard = document.getElementById('comicDetailsCard');
-
-    function syncDetailsHeight() {
-        if (!sidebarCard || !detailsCard) return;
-        if (window.matchMedia('(max-width: 767.98px)').matches) {
-            detailsCard.style.height = '';
-            detailsCard.style.maxHeight = '';
-            return;
-        }
-        const height = Math.round(sidebarCard.getBoundingClientRect().height);
-        if (height > 0) {
-            detailsCard.style.height = height + 'px';
-            detailsCard.style.maxHeight = height + 'px';
-        }
-    }
-
-    syncDetailsHeight();
-    window.addEventListener('resize', syncDetailsHeight);
-    sidebarCard?.querySelectorAll('img').forEach(function (img) {
-        if (!img.complete) {
-            img.addEventListener('load', syncDetailsHeight, { once: true });
-        }
-    });
-    if (typeof ResizeObserver !== 'undefined' && sidebarCard) {
-        new ResizeObserver(syncDetailsHeight).observe(sidebarCard);
-    }
-
     const enrich = window.ComicEnrich;
     const estimatedValueBadge = document.getElementById('comicEstimatedValueBadge');
     const showValueHost = document.getElementById('showValueEstimateHost');

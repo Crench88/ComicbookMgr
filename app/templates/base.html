@@ -33,7 +33,8 @@
 <body>
     <nav class="navbar navbar-expand-lg app-navbar">
         <div class="container-fluid px-3 px-lg-4">
-            <a class="navbar-brand" href="{{ url_for('main.index') }}">
+            {% set brand_endpoint = 'dashboard.index' if current_user.is_authenticated else 'main.index' %}
+            <a class="navbar-brand" href="{{ url_for(brand_endpoint) }}">
                 <i class="bi bi-book-half"></i>
                 <span>ComicBook Manager</span>
             </a>
@@ -44,42 +45,47 @@
             </button>
 
             <div class="collapse navbar-collapse" id="navbarNav">
+                {% set ep = request.endpoint or '' %}
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('main.index') }}">Home</a>
-                    </li>
                     {% if current_user.is_authenticated %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('dashboard.index') }}">Dashboard</a>
+                        <a class="nav-link{% if ep == 'dashboard.index' %} active{% endif %}" href="{{ url_for('dashboard.index') }}">Dashboard</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('comics.index') }}">My Comics</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('comics.wishlist') }}">Wishlist</a>
+                        <a class="nav-link{% if ep.startswith('comics.') and ep != 'comics.wishlist' %} active{% endif %}" href="{{ url_for('comics.index') }}">My Comics</a>
                     </li>
                     {% if current_user.is_admin %}
+                    <li class="nav-item">
+                        <a class="nav-link{% if ep == 'admin.series_index' %} active{% endif %}" href="{{ url_for('admin.series_index') }}">Series List</a>
+                    </li>
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" id="comicAdminMenu" role="button"
+                        <a class="nav-link dropdown-toggle{% if ep.startswith('admin.') and ep != 'admin.series_index' %} active{% endif %}" href="#" id="comicAdminMenu" role="button"
                            data-bs-toggle="dropdown" aria-expanded="false">Comic Admin</a>
                         <ul class="dropdown-menu" aria-labelledby="comicAdminMenu">
-                            <li><a class="dropdown-item" href="{{ url_for('admin.series_index') }}">Series List</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin.series_issues') }}">Series Issues</a></li>
-                            <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin.manage_roles') }}">
                                 <i class="bi bi-shield-lock me-1"></i>Manage Roles
                             </a></li>
                         </ul>
                     </li>
                     {% endif %}
-                    {% endif %}
+                    {% else %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('main.about') }}">About</a>
+                        <a class="nav-link{% if ep == 'main.index' %} active{% endif %}" href="{{ url_for('main.index') }}">Home</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link{% if ep == 'main.about' %} active{% endif %}" href="{{ url_for('main.about') }}">About</a>
+                    </li>
+                    {% endif %}
                 </ul>
 
                 <ul class="navbar-nav align-items-lg-center gap-lg-2">
                     {% if current_user.is_authenticated %}
+                    <li class="nav-item">
+                        <a class="btn btn-primary btn-sm nav-add-btn" href="{{ url_for('comics.new') }}">
+                            <i class="bi bi-plus-circle me-1"></i>Add
+                        </a>
+                    </li>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle d-flex align-items-center gap-1" href="#"
                            id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -87,9 +93,6 @@
                             <span>{{ current_user.username }}</span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" href="{{ url_for('comics.new') }}">
-                                <i class="bi bi-plus-circle me-2"></i>Add Comic
-                            </a></li>
                             <li><a class="dropdown-item" href="{{ url_for('comics.export') }}">
                                 <i class="bi bi-download me-2"></i>Export Collection
                             </a></li>
@@ -165,7 +168,10 @@
         <div class="container-fluid px-3 px-lg-4" style="max-width: var(--content-max); margin: 0 auto;">
             <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-2">
                 <p class="mb-0">&copy; 2026 Comic Book Collection Manager</p>
-                <a href="{{ url_for('main.contact') }}">Contact</a>
+                <div class="d-flex gap-3">
+                    <a href="{{ url_for('main.about') }}">About</a>
+                    <a href="{{ url_for('main.contact') }}">Contact</a>
+                </div>
             </div>
         </div>
     </footer>

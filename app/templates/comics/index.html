@@ -12,12 +12,6 @@
         <a href="{{ url_for('comics.new') }}" class="btn btn-primary">
             <i class="bi bi-plus-circle me-1"></i> Add Comic
         </a>
-        <a href="{{ url_for('comics.import_comics') }}" class="btn btn-outline-primary">
-            <i class="bi bi-upload me-1"></i> Import
-        </a>
-        <a href="{{ url_for('comics.export') }}" class="btn btn-outline-success">
-            <i class="bi bi-download me-1"></i> Export
-        </a>
     </div>
 </div>
 
@@ -103,11 +97,14 @@
                         <option value="date_added" {% if sort_by == 'date_added' %}selected{% endif %}>Date Added</option>
                     </select>
                 </div>
-                <div class="col-md-4 col-lg-1 d-flex align-items-end">
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="wishlist" name="wishlist"
-                               value="1" {% if wishlist_only %}checked{% endif %}>
-                        <label class="form-check-label" for="wishlist">Wishlist</label>
+                <div class="col-md-4 col-lg-2 d-flex align-items-end">
+                    <div class="mb-2">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="wishlist" name="wishlist"
+                                   value="1" {% if wishlist_only %}checked{% endif %}>
+                            <label class="form-check-label" for="wishlist">Wishlist only</label>
+                        </div>
+                        <a href="{{ url_for('comics.wishlist') }}" class="small">Open wishlist</a>
                     </div>
                 </div>
             </div>
@@ -178,6 +175,20 @@
                     · page {{ comics_pagination.page }} of {{ comics_pagination.pages }}
                     {% endif %}
                 </p>
+            </div>
+            <div id="seriesGapBanner" class="series-gap-banner"{% if not series_gaps or not series_gaps.missing %} hidden{% endif %}>
+                {% if series_gaps and series_gaps.missing %}
+                <div class="series-gap-copy">
+                    <strong>Missing {{ series_gaps.missing|length }} of {{ series_gaps.catalog_count }} catalog issues</strong>
+                    <span class="series-gap-numbers">
+                        {% for number in series_gaps.missing_preview %}#{{ number }}{% if not loop.last %}, {% endif %}{% endfor %}
+                        {% if series_gaps.missing_more %} and {{ series_gaps.missing_more }} more{% endif %}
+                    </span>
+                </div>
+                <a href="{{ series_gaps.add_url }}" class="btn btn-sm btn-outline-primary" id="seriesGapAddLink">
+                    <i class="bi bi-plus-circle"></i> Add missing
+                </a>
+                {% endif %}
             </div>
         </header>
 

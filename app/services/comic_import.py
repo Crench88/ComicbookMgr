@@ -10,6 +10,7 @@ from io import StringIO
 
 from .. import db
 from ..models import Comic
+from .characters import sync_character_mentions
 from .series_link import apply_series_link
 
 HEADER_ALIASES = {
@@ -278,6 +279,8 @@ def import_records(records: list[dict], user_id: int, *, skip_duplicates: bool =
         )
         apply_series_link(comic, record['series'], publisher=record['publisher'])
         db.session.add(comic)
+        db.session.flush()
+        sync_character_mentions(comic)
         added += 1
 
     db.session.commit()

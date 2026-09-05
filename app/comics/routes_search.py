@@ -20,6 +20,7 @@ from ..services.local_catalog import search_local_series_volumes
 from ..services.pricing import estimate_market_value
 from ..services.safe_http import UnsafeRemoteUrl, fetch_public_image
 from ..services.search_orchestrator import run_comic_search
+from ..services.characters import sync_character_mentions
 from ..services.series_link import apply_series_link
 from . import comics_bp
 from .helpers import _na_publishers_only_from_request
@@ -212,6 +213,7 @@ def refresh_comicvine_metadata(id):
 
         if request.method == 'POST':
             _apply_comicvine_metadata(comic, metadata)
+            sync_character_mentions(comic)
             db.session.commit()
             payload['success'] = True
             payload['applied'] = True

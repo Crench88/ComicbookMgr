@@ -4,16 +4,18 @@
 
 {% block content %}
 {% set series_options = series_options if series_options is defined else [] %}
+{% set is_edit = comic is not none %}
 {% from "comics/partials/_volume_picker.html" import series_volume_picker %}
+{% from "comics/partials/_ownership_sliders.html" import ownership_sliders %}
 <div class="row justify-content-center">
-    <div class="col-lg-8">
+    <div class="{{ 'col-lg-11' if is_edit else 'col-lg-8' }}">
         <div class="card shadow">
             <div class="card-header">
                 <h3 class="card-title mb-0">
-                    <i class="bi bi-{{ 'plus-circle' if not comic else 'pencil' }}"></i> 
+                    <i class="bi bi-{{ 'pencil' if is_edit else 'plus-circle' }}"></i>
                     {{ title }}
                 </h3>
-                {% if not comic %}
+                {% if not is_edit %}
                 <ul class="nav nav-tabs card-header-tabs mt-3" id="addModeTabs" role="tablist">
                     <li class="nav-item" role="presentation">
                         <button class="nav-link active" id="single-tab" data-bs-toggle="tab"
@@ -33,331 +35,333 @@
                 {% endif %}
             </div>
             <div class="card-body">
-                {% if not comic %}
+                {% if not is_edit %}
                 {{ series_volume_picker() }}
                 <div class="tab-content">
                     <div class="tab-pane fade show active" id="singleAddPanel" role="tabpanel" aria-labelledby="single-tab">
                 {% endif %}
-                {% include "comics/partials/_search_panel.html" %}
 
-                <form method="POST" enctype="multipart/form-data">
+                <form method="POST" enctype="multipart/form-data"
+                      class="comic-form {% if is_edit %}comic-form-edit{% else %}comic-form-add{% endif %}"
+                      {% if not is_edit %}data-comic-form-wizard{% endif %}>
                     {{ form.hidden_tag() }}
                     <input type="hidden" name="catalog_series_id" id="catalogSeriesId"
                            value="{{ comic.series_id if comic and comic.series_id else '' }}">
                     <input type="hidden" name="comicvine_volume_id" id="comicvineVolumeId" value="">
-                    
-                    <div class="row">
-                        <!-- Series and Issue Number -->
-                        <div class="col-md-8">
-                            <div class="mb-3">
-                                {{ form.series.label(class="form-label") }}
-                                {{ form.series(class="form-control" + (" is-invalid" if form.series.errors else ""), placeholder="e.g., The Amazing Spider-Man", id="comicSeries", list="seriesOptions") }}
-                                {% if form.series.errors %}
-                                    <div class="invalid-feedback">
-                                        {% for error in form.series.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                                <div class="form-text">
-                                    Series name (e.g., "The Amazing Spider-Man"). Start typing to select from your Series List.
-                                    <a href="{{ url_for('admin.series_index') }}" class="ms-1">Manage Series</a>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="mb-3">
-                                {{ form.issue_number.label(class="form-label") }}
-                                {{ form.issue_number(class="form-control" + (" is-invalid" if form.issue_number.errors else ""), id="comicIssueNumber") }}
-                                {% if form.issue_number.errors %}
-                                    <div class="invalid-feedback">
-                                        {% for error in form.issue_number.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <!-- Title -->
-                        <div class="col-md-12">
-                            <div class="mb-3">
-                                {{ form.title.label(class="form-label") }}
-                                {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else ""), placeholder="e.g., Worldwide", id="comicTitle") }}
-                                {% if form.title.errors %}
-                                    <div class="invalid-feedback">
-                                        {% for error in form.title.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                                <div class="form-text">Individual issue title (e.g., "Worldwide")</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <!-- Publisher and Genre -->
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                {{ form.publisher.label(class="form-label") }}
-                                {{ form.publisher(class="form-control" + (" is-invalid" if form.publisher.errors else ""), id="comicPublisher") }}
-                                {% if form.publisher.errors %}
-                                    <div class="invalid-feedback">
-                                        {% for error in form.publisher.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                {{ form.genre.label(class="form-label") }}
-                                {{ form.genre(class="form-control" + (" is-invalid" if form.genre.errors else ""), id="comicGenre") }}
-                                {% if form.genre.errors %}
-                                    <div class="invalid-feedback">
-                                        {% for error in form.genre.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Characters -->
-                    <div class="mb-3">
-                        {{ form.characters.label(class="form-label") }}
-                        {{ form.characters(class="form-control" + (" is-invalid" if form.characters.errors else ""), rows=3, placeholder="Enter characters separated by commas (e.g., Spider-Man, Mary Jane, Green Goblin)", id="comicCharacters") }}
-                        {% if form.characters.errors %}
-                            <div class="invalid-feedback">
-                                {% for error in form.characters.errors %}
-                                    {{ error }}
-                                {% endfor %}
-                            </div>
-                        {% endif %}
-                        <div class="form-text">Separate multiple characters with commas</div>
-                    </div>
-
-                    <div class="card mb-3 border-secondary">
-                        <div class="card-header py-2">
-                            <h6 class="mb-0"><i class="bi bi-people"></i> Creative Team & Story Details</h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        {{ form.writer.label(class="form-label") }}
-                                        {{ form.writer(class="form-control" + (" is-invalid" if form.writer.errors else ""), rows=2, id="comicWriter") }}
-                                        {% if form.writer.errors %}
-                                            <div class="invalid-feedback">
-                                                {% for error in form.writer.errors %}{{ error }}{% endfor %}
-                                            </div>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        {{ form.artist.label(class="form-label") }}
-                                        {{ form.artist(class="form-control" + (" is-invalid" if form.artist.errors else ""), rows=2, id="comicArtist") }}
-                                        {% if form.artist.errors %}
-                                            <div class="invalid-feedback">
-                                                {% for error in form.artist.errors %}{{ error }}{% endfor %}
-                                            </div>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                {% for field, dom_id in [
-                                    (form.penciler, 'comicPenciler'),
-                                    (form.inker, 'comicInker'),
-                                    (form.colorist, 'comicColorist'),
-                                    (form.letterer, 'comicLetterer'),
-                                    (form.cover_artist, 'comicCoverArtist'),
-                                    (form.editor, 'comicEditor'),
-                                    (form.assistant_editor, 'comicAssistantEditor'),
-                                    (form.designer, 'comicDesigner'),
-                                    (form.production, 'comicProduction'),
-                                    (form.translator, 'comicTranslator'),
-                                    (form.other_credits, 'comicOtherCredits'),
-                                ] %}
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        {{ field.label(class="form-label") }}
-                                        {{ field(class="form-control" + (" is-invalid" if field.errors else ""), id=dom_id) }}
-                                    </div>
-                                </div>
-                                {% endfor %}
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        {{ form.story_arc.label(class="form-label") }}
-                                        {{ form.story_arc(class="form-control" + (" is-invalid" if form.story_arc.errors else ""), id="comicStoryArc") }}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="mb-3">
-                                {{ form.teams.label(class="form-label") }}
-                                {{ form.teams(class="form-control" + (" is-invalid" if form.teams.errors else ""), rows=2, id="comicTeams") }}
-                            </div>
-                            <div class="mb-0">
-                                {{ form.description.label(class="form-label") }}
-                                {{ form.description(class="form-control" + (" is-invalid" if form.description.errors else ""), rows=3, id="comicDescription") }}
-                                <div class="form-text">Synopsis from ComicVine (deck/description).</div>
-                            </div>
-                        </div>
-                    </div>
                     {{ form.comicvine_issue_id(id="comicvineIssueId") }}
                     <input type="hidden" name="comicvine_url" id="comicvineUrl"
                            value="{{ comic.comicvine_url if comic and comic.comicvine_url else '' }}">
-                    
-                    <!-- UPC -->
-                    <div class="mb-3">
-                        {{ form.upc.label(class="form-label") }}
-                        <div class="input-group">
-                            {{ form.upc(class="form-control" + (" is-invalid" if form.upc.errors else ""), placeholder="123456789012", id="comicUPC") }}
-                            {% if comic and comic.has_cover_image() %}
-                            <button type="button" class="btn btn-outline-primary" id="scanCoverBarcodeBtn"
-                                    data-comic-id="{{ comic.id }}"
-                                    data-existing-upc="{{ comic.upc or '' }}"
-                                    title="Scan barcode from cover image">
-                                <i class="bi bi-upc-scan"></i>
-                            </button>
-                            {% endif %}
-                        </div>
-                        {% if form.upc.errors %}
-                            <div class="invalid-feedback d-block">
-                                {% for error in form.upc.errors %}
-                                    {{ error }}
-                                {% endfor %}
+
+                    {% if not is_edit %}
+                    <nav class="comic-form-steps" aria-label="Add comic steps">
+                        <button type="button" class="comic-form-step-btn is-active" data-step-target="1">1. Identify</button>
+                        <button type="button" class="comic-form-step-btn" data-step-target="2">2. Details</button>
+                        <button type="button" class="comic-form-step-btn" data-step-target="3">3. Covers &amp; ownership</button>
+                    </nav>
+                    {% endif %}
+
+                    {% if is_edit %}
+                    <div class="comic-form-edit-grid">
+                        <aside class="comic-form-edit-cover">
+                            <div class="card border-0 bg-transparent">
+                                {% include "comics/partials/_cover_section.html" %}
+                                <div class="mb-3">
+                                    <label class="form-label d-block">Ownership</label>
+                                    {{ ownership_sliders(form_fields=form) }}
+                                </div>
                             </div>
-                        {% endif %}
-                        <div class="form-text">12-digit Universal Product Code. Use the scan button to read it from the cover.</div>
-                        <div id="scanCoverBarcodeStatus" class="small mt-1 d-none"></div>
-                    </div>
-                    
-                    <div class="row">
-                        <!-- Release Date and Condition -->
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                {{ form.release_date.label(class="form-label") }}
-                                {{ form.release_date(class="form-control" + (" is-invalid" if form.release_date.errors else ""), type="date", id="comicReleaseDate") }}
-                                {% if form.release_date.errors %}
-                                    <div class="invalid-feedback">
-                                        {% for error in form.release_date.errors %}
-                                            {{ error }}
-                                        {% endfor %}
+                        </aside>
+                        <div class="comic-form-edit-fields">
+                    {% endif %}
+
+                    <section class="comic-form-panel {% if not is_edit %}is-active{% endif %}" data-form-step="1">
+                        {% include "comics/partials/_search_panel.html" %}
+
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    {{ form.series.label(class="form-label") }}
+                                    {{ form.series(class="form-control" + (" is-invalid" if form.series.errors else ""), placeholder="e.g., The Amazing Spider-Man", id="comicSeries", list="seriesOptions") }}
+                                    {% if form.series.errors %}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.series.errors %}{{ error }}{% endfor %}
+                                        </div>
+                                    {% endif %}
+                                    <div class="form-text">
+                                        Series name (e.g., "The Amazing Spider-Man"). Start typing to select from your Series List.
+                                        <a href="{{ url_for('admin.series_index') }}" class="ms-1">Manage Series</a>
                                     </div>
-                                {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    {{ form.issue_number.label(class="form-label") }}
+                                    {{ form.issue_number(class="form-control" + (" is-invalid" if form.issue_number.errors else ""), id="comicIssueNumber") }}
+                                    {% if form.issue_number.errors %}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.issue_number.errors %}{{ error }}{% endfor %}
+                                        </div>
+                                    {% endif %}
+                                </div>
                             </div>
                         </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                {{ form.condition.label(class="form-label") }}
-                                {{ form.condition(class="form-select" + (" is-invalid" if form.condition.errors else "")) }}
-                                {% if form.condition.errors %}
-                                    <div class="invalid-feedback">
-                                        {% for error in form.condition.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Estimated Value -->
-                    <div class="mb-3">
-                        {{ form.estimated_value.label(class="form-label") }}
-                        <div class="input-group">
-                            <span class="input-group-text">$</span>
-                            {{ form.estimated_value(class="form-control" + (" is-invalid" if form.estimated_value.errors else ""), type="number", step="0.01", min="0", placeholder="0.00", id="estimatedValueField") }}
-                            <button type="button" class="btn btn-outline-primary" id="valueLookupBtn" title="Look up market value">
-                                <i class="bi bi-robot"></i>
-                            </button>
-                            {% if form.estimated_value.errors %}
+
+                        <div class="mb-3">
+                            {{ form.title.label(class="form-label") }}
+                            {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else ""), placeholder="e.g., Worldwide", id="comicTitle") }}
+                            {% if form.title.errors %}
                                 <div class="invalid-feedback">
-                                    {% for error in form.estimated_value.errors %}
-                                        {{ error }}
+                                    {% for error in form.title.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                            <div class="form-text">Individual issue title (e.g., "Worldwide")</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    {{ form.publisher.label(class="form-label") }}
+                                    {{ form.publisher(class="form-control" + (" is-invalid" if form.publisher.errors else ""), id="comicPublisher") }}
+                                    {% if form.publisher.errors %}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.publisher.errors %}{{ error }}{% endfor %}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    {{ form.genre.label(class="form-label") }}
+                                    {{ form.genre(class="form-control" + (" is-invalid" if form.genre.errors else ""), id="comicGenre") }}
+                                    {% if form.genre.errors %}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.genre.errors %}{{ error }}{% endfor %}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="comic-form-panel" data-form-step="2">
+                        <div class="mb-3">
+                            {{ form.characters.label(class="form-label") }}
+                            {{ form.characters(class="form-control" + (" is-invalid" if form.characters.errors else ""), rows=3, placeholder="Enter characters separated by commas (e.g., Spider-Man, Mary Jane, Green Goblin)", id="comicCharacters") }}
+                            {% if form.characters.errors %}
+                                <div class="invalid-feedback">
+                                    {% for error in form.characters.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                            <div class="form-text">Separate multiple characters with commas</div>
+                        </div>
+
+                        <div class="card mb-3 border-secondary">
+                            <div class="card-header py-2">
+                                <h6 class="mb-0"><i class="bi bi-people"></i> Creative Team &amp; Story Details</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            {{ form.writer.label(class="form-label") }}
+                                            {{ form.writer(class="form-control" + (" is-invalid" if form.writer.errors else ""), rows=2, id="comicWriter") }}
+                                            {% if form.writer.errors %}
+                                                <div class="invalid-feedback">
+                                                    {% for error in form.writer.errors %}{{ error }}{% endfor %}
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            {{ form.artist.label(class="form-label") }}
+                                            {{ form.artist(class="form-control" + (" is-invalid" if form.artist.errors else ""), rows=2, id="comicArtist") }}
+                                            {% if form.artist.errors %}
+                                                <div class="invalid-feedback">
+                                                    {% for error in form.artist.errors %}{{ error }}{% endfor %}
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    {% for field, dom_id in [
+                                        (form.penciler, 'comicPenciler'),
+                                        (form.inker, 'comicInker'),
+                                        (form.colorist, 'comicColorist'),
+                                        (form.letterer, 'comicLetterer'),
+                                        (form.cover_artist, 'comicCoverArtist'),
+                                        (form.editor, 'comicEditor'),
+                                        (form.assistant_editor, 'comicAssistantEditor'),
+                                        (form.designer, 'comicDesigner'),
+                                        (form.production, 'comicProduction'),
+                                        (form.translator, 'comicTranslator'),
+                                        (form.other_credits, 'comicOtherCredits'),
+                                    ] %}
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            {{ field.label(class="form-label") }}
+                                            {{ field(class="form-control" + (" is-invalid" if field.errors else ""), id=dom_id) }}
+                                        </div>
+                                    </div>
                                     {% endfor %}
                                 </div>
+                                <div class="mb-3">
+                                    {{ form.story_arc.label(class="form-label") }}
+                                    {{ form.story_arc(class="form-control" + (" is-invalid" if form.story_arc.errors else ""), id="comicStoryArc") }}
+                                </div>
+                                <div class="mb-3">
+                                    {{ form.teams.label(class="form-label") }}
+                                    {{ form.teams(class="form-control" + (" is-invalid" if form.teams.errors else ""), rows=2, id="comicTeams") }}
+                                </div>
+                                <div class="mb-0">
+                                    {{ form.description.label(class="form-label") }}
+                                    {{ form.description(class="form-control" + (" is-invalid" if form.description.errors else ""), rows=3, id="comicDescription") }}
+                                    <div class="form-text">Synopsis from ComicVine (deck/description).</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            {{ form.upc.label(class="form-label") }}
+                            <div class="input-group">
+                                {{ form.upc(class="form-control" + (" is-invalid" if form.upc.errors else ""), placeholder="123456789012", id="comicUPC") }}
+                                {% if comic and comic.has_cover_image() %}
+                                <button type="button" class="btn btn-outline-primary" id="scanCoverBarcodeBtn"
+                                        data-comic-id="{{ comic.id }}"
+                                        data-existing-upc="{{ comic.upc or '' }}"
+                                        title="Scan barcode from cover image">
+                                    <i class="bi bi-upc-scan"></i>
+                                </button>
+                                {% endif %}
+                            </div>
+                            {% if form.upc.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {% for error in form.upc.errors %}{{ error }}{% endfor %}
+                                </div>
+                            {% endif %}
+                            <div class="form-text">12-digit Universal Product Code. Use the scan button to read it from the cover.</div>
+                            <div id="scanCoverBarcodeStatus" class="small mt-1 d-none"></div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    {{ form.release_date.label(class="form-label") }}
+                                    {{ form.release_date(class="form-control" + (" is-invalid" if form.release_date.errors else ""), type="date", id="comicReleaseDate") }}
+                                    {% if form.release_date.errors %}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.release_date.errors %}{{ error }}{% endfor %}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    {{ form.condition.label(class="form-label") }}
+                                    {{ form.condition(class="form-select" + (" is-invalid" if form.condition.errors else "")) }}
+                                    {% if form.condition.errors %}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.condition.errors %}{{ error }}{% endfor %}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            {{ form.estimated_value.label(class="form-label") }}
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                {{ form.estimated_value(class="form-control" + (" is-invalid" if form.estimated_value.errors else ""), type="number", step="0.01", min="0", placeholder="0.00", id="estimatedValueField") }}
+                                <button type="button" class="btn btn-outline-primary" id="valueLookupBtn" title="Look up market value">
+                                    <i class="bi bi-robot"></i>
+                                </button>
+                                {% if form.estimated_value.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.estimated_value.errors %}{{ error }}{% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                            <div class="form-text">
+                                <i class="bi bi-info-circle"></i> Click the lookup button to price this issue against current eBay Canada listings for the same series, issue, and condition.
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            {{ form.notes.label(class="form-label") }}
+                            {{ form.notes(class="form-control" + (" is-invalid" if form.notes.errors else ""), rows=4, placeholder="Add any additional notes about this comic...") }}
+                            {% if form.notes.errors %}
+                                <div class="invalid-feedback">
+                                    {% for error in form.notes.errors %}{{ error }}{% endfor %}
+                                </div>
                             {% endif %}
                         </div>
-                        <div class="form-text">
-                            <i class="bi bi-info-circle"></i> Click the lookup button to price this issue against current eBay Canada listings for the same series, issue, and condition. The estimate shows the comparable listings it used, so you can judge it yourself. Without eBay keys configured it falls back to a rough offline estimate.
-                        </div>
-                    </div>
-                    
-                    <!-- Ownership sliders -->
-                    {% from "comics/partials/_ownership_sliders.html" import ownership_sliders %}
-                    <div class="mb-3">
-                        <label class="form-label d-block">Ownership</label>
-                        {{ ownership_sliders(form_fields=form) }}
-                    </div>
 
-                    {% include "comics/partials/_cover_section.html" %}
-
-                    
-                    <!-- Notes -->
-                    <div class="mb-3">
-                        {{ form.notes.label(class="form-label") }}
-                        {{ form.notes(class="form-control" + (" is-invalid" if form.notes.errors else ""), rows=4, placeholder="Add any additional notes about this comic...") }}
-                        {% if form.notes.errors %}
-                            <div class="invalid-feedback">
-                                {% for error in form.notes.errors %}
-                                    {{ error }}
-                                {% endfor %}
-                            </div>
-                        {% endif %}
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-8">
-                            <div class="mb-3">
-                                {{ form.tags.label(class="form-label") }}
-                                {{ form.tags(class="form-control" + (" is-invalid" if form.tags.errors else ""), placeholder="e.g., key-issue, bronze-age, signed", id="comicTags") }}
-                                {% if form.tags.errors %}
-                                <div class="invalid-feedback">
-                                    {% for error in form.tags.errors %}{{ error }}{% endfor %}
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    {{ form.tags.label(class="form-label") }}
+                                    {{ form.tags(class="form-control" + (" is-invalid" if form.tags.errors else ""), placeholder="e.g., key-issue, bronze-age, signed", id="comicTags") }}
+                                    {% if form.tags.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.tags.errors %}{{ error }}{% endfor %}
+                                    </div>
+                                    {% endif %}
+                                    <div class="form-text">Comma-separated tags for organizing your collection.</div>
                                 </div>
-                                {% endif %}
-                                <div class="form-text">Comma-separated tags for organizing your collection.</div>
                             </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="mb-3">
-                                {{ form.read_status.label(class="form-label") }}
-                                {{ form.read_status(class="form-select" + (" is-invalid" if form.read_status.errors else ""), id="comicReadStatus") }}
-                                {% if form.read_status.errors %}
-                                <div class="invalid-feedback">
-                                    {% for error in form.read_status.errors %}{{ error }}{% endfor %}
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    {{ form.read_status.label(class="form-label") }}
+                                    {{ form.read_status(class="form-select" + (" is-invalid" if form.read_status.errors else ""), id="comicReadStatus") }}
+                                    {% if form.read_status.errors %}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.read_status.errors %}{{ error }}{% endfor %}
+                                    </div>
+                                    {% endif %}
                                 </div>
-                                {% endif %}
                             </div>
                         </div>
-                    </div>
+                    </section>
 
-                    <!-- Submit Buttons -->
-                    <div class="d-flex justify-content-between">
-                        <a href="{{ collection_return_url|default(url_for('comics.index')) if comic else url_for('comics.index') }}" class="btn btn-secondary">
-                            <i class="bi bi-arrow-left"></i> Cancel
-                        </a>
-                        <div>
-                            {% if comic %}
-                            <a href="{{ url_for('comics.show', id=comic.id, next=collection_return_url|default(url_for('comics.index'))) }}" class="btn btn-outline-primary me-2">
+                    {% if not is_edit %}
+                    <section class="comic-form-panel" data-form-step="3">
+                        <div class="mb-3">
+                            <label class="form-label d-block">Ownership</label>
+                            {{ ownership_sliders(form_fields=form) }}
+                        </div>
+                        {% include "comics/partials/_cover_section.html" %}
+                    </section>
+                    {% endif %}
+
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 comic-form-actions">
+                        <div class="d-flex gap-2">
+                            <a href="{{ collection_return_url|default(url_for('comics.index')) if comic else url_for('comics.index') }}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left"></i> Cancel
+                            </a>
+                            {% if not is_edit %}
+                            <button type="button" class="btn btn-outline-secondary" data-wizard-prev hidden>Back</button>
+                            {% endif %}
+                        </div>
+                        <div class="d-flex gap-2">
+                            {% if is_edit %}
+                            <a href="{{ url_for('comics.show', id=comic.id, next=collection_return_url|default(url_for('comics.index'))) }}" class="btn btn-outline-primary">
                                 <i class="bi bi-eye"></i> View
                             </a>
+                            {% else %}
+                            <button type="button" class="btn btn-outline-primary" data-wizard-next>Next</button>
                             {% endif %}
-                            {{ form.submit(class="btn btn-primary") }}
+                            {{ form.submit(class="btn btn-primary", **({} if is_edit else {'hidden': true, 'data-wizard-submit': true})) }}
                         </div>
                     </div>
+
+                    {% if is_edit %}
+                        </div>
+                    </div>
+                    {% endif %}
                 </form>
-                {% if not comic %}
+                {% if not is_edit %}
                     </div><!-- /singleAddPanel -->
 
                     {% include "comics/partials/_bulk_add_panel.html" %}
@@ -378,4 +382,58 @@
 {% endif %}
 
 {% include "comics/partials/_form_scripts.html" %}
+<script>
+(function() {
+    var form = document.querySelector('[data-comic-form-wizard]');
+    if (!form) return;
+
+    var current = 1;
+    var total = 3;
+    var panels = form.querySelectorAll('[data-form-step]');
+    var buttons = form.querySelectorAll('[data-step-target]');
+    var prevBtn = form.querySelector('[data-wizard-prev]');
+    var nextBtn = form.querySelector('[data-wizard-next]');
+    var submitBtn = form.querySelector('[data-wizard-submit]');
+
+    function requiredOk() {
+        var series = form.querySelector('#comicSeries');
+        var issue = form.querySelector('#comicIssueNumber');
+        var publisher = form.querySelector('#comicPublisher');
+        var missing = [series, issue, publisher].filter(function(field) {
+            return field && !String(field.value || '').trim();
+        });
+        if (!missing.length) return true;
+        missing[0].focus();
+        missing[0].reportValidity();
+        return false;
+    }
+
+    function show(step) {
+        current = step;
+        panels.forEach(function(panel) {
+            panel.classList.toggle('is-active', Number(panel.dataset.formStep) === step);
+        });
+        buttons.forEach(function(btn) {
+            btn.classList.toggle('is-active', Number(btn.dataset.stepTarget) === step);
+        });
+        if (prevBtn) prevBtn.hidden = step === 1;
+        if (nextBtn) nextBtn.hidden = step === total;
+        if (submitBtn) submitBtn.hidden = step !== total;
+    }
+
+    buttons.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var target = Number(btn.dataset.stepTarget);
+            if (target > 1 && !requiredOk()) return;
+            show(target);
+        });
+    });
+    if (prevBtn) prevBtn.addEventListener('click', function() { show(Math.max(1, current - 1)); });
+    if (nextBtn) nextBtn.addEventListener('click', function() {
+        if (current === 1 && !requiredOk()) return;
+        show(Math.min(total, current + 1));
+    });
+    show(1);
+})();
+</script>
 {% endblock %}

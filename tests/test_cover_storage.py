@@ -9,10 +9,13 @@ from PIL import Image
 from app import create_app, db
 from app.models import Comic, ComicCover, User
 from app.services.cover_storage import (
+    THUMB_SIZE,
+    delete_cover_file,
     get_primary_cover_bytes,
     migrate_comic_covers,
     persist_primary_cover,
     persist_variant_cover,
+    thumbnail_relative_path,
 )
 
 
@@ -81,6 +84,12 @@ def test_persist_and_serve_primary_from_filesystem(client, app, user_id):
 
     assert rel
     assert (Path(covers_root) / rel).read_bytes() == blob
+    thumb_rel = thumbnail_relative_path(rel)
+    assert thumb_rel
+    thumb_path = Path(covers_root) / thumb_rel
+    assert thumb_path.is_file()
+    with Image.open(thumb_path) as thumb:
+        assert thumb.format == 'WEBP'
 
     with app.app_context():
         comic = db.session.get(Comic, comic_id)
@@ -90,6 +99,10 @@ def test_persist_and_serve_primary_from_filesystem(client, app, user_id):
     resp = client.get(f'/comics/{comic_id}/cover')
     assert resp.status_code == 200
     assert resp.data == blob
+
+    thumb = client.get(f'/comics/{comic_id}/cover/thumbnail')
+    assert thumb.status_code == 200
+    assert thumb.content_type == 'image/webp'
 
 
 def test_serve_falls_back_to_blob_when_path_missing(client, app, user_id):
@@ -259,6 +272,34 @@ def test_cover_cache_headers_require_a_version_to_be_cacheable(client, app, user
     assert versioned.headers['Cache-Control'] == 'private, max-age=31536000'
 
 
+def test_cover_payloads_include_urls_without_requiring_blob(client, app, user_id):
+    primary = _jpeg_bytes(color=(10, 20, 30))
+    variant = _jpeg_bytes(color=(40, 50, 60))
+    comic_id, cover_id = _comic_with_variant(app, user_id, primary, variant)
+    _login(client, user_id)
+
+    with app.test_request_context():
+        comic = db.session.get(Comic, comic_id)
+        summaries = comic.list_cover_summaries()
+        assert summaries[0]['thumbnail_url']
+        assert f'/comics/{comic_id}/cover/thumbnail' in summaries[0]['thumbnail_url']
+        variant_summary = next(item for item in summaries if item['id'] == cover_id)
+        assert variant_summary['url']
+        assert f'/covers/{cover_id}/image' in variant_summary['url']
+
+        without_blob = comic.get_additional_covers()
+        assert 'blob_data' not in without_blob[0]
+        assert without_blob[0]['thumbnail_url']
+        assert f'/covers/{cover_id}/thumbnail' in without_blob[0]['thumbnail_url']
+
+        with_blob = comic.get_additional_covers(include_blob=True)
+        assert with_blob[0]['blob_data']
+        assert with_blob[0]['url']
+
+    assert client.get(f'/comics/{comic_id}/covers/{cover_id}/image').status_code == 200
+    assert client.get(f'/comics/{comic_id}/covers/{cover_id}/thumbnail').status_code == 200
+
+
 def test_has_cover_image_true_for_path_only(app, user_id):
     blob = _jpeg_bytes()
     with app.app_context():
@@ -276,3 +317,31 @@ def test_has_cover_image_true_for_path_only(app, user_id):
         assert comic.cover_image is None
         assert comic.cover_image_path
         assert comic.has_cover_image()
+
+
+def test_persist_writes_capped_webp_thumb_and_delete_removes_it(app, user_id):
+    blob = _jpeg_bytes(size=(900, 1200))
+    with app.app_context():
+        comic = Comic(
+            title='Thumb Size',
+            issue_number='7',
+            publisher='Test',
+            user_id=user_id,
+        )
+        db.session.add(comic)
+        db.session.flush()
+        persist_primary_cover(comic, blob, 'image/jpeg')
+        db.session.commit()
+
+        covers_root = Path(app.config['COVERS_FOLDER'])
+        thumb_rel = thumbnail_relative_path(comic.cover_image_path)
+        thumb_path = covers_root / thumb_rel
+        assert thumb_path.is_file()
+        with Image.open(thumb_path) as thumb:
+            assert thumb.format == 'WEBP'
+            assert thumb.width <= THUMB_SIZE[0]
+            assert thumb.height <= THUMB_SIZE[1]
+
+        delete_cover_file(comic.cover_image_path)
+        assert not (covers_root / comic.cover_image_path).exists()
+        assert not thumb_path.exists()

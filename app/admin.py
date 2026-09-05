@@ -13,6 +13,7 @@ from io import StringIO
 from . import db
 from .forms import SeriesForm, SeriesIssueForm, SeriesIssueUploadForm
 from .models import Series, SeriesIssue, Comic, User
+from .services.series_link import sync_owned_comics_series_text
 from .services.comicvine import (
     parse_comicvine_volume_id,
     fetch_volume_issues_for_import,
@@ -265,6 +266,7 @@ def edit_series(series_id):
         series.notes = form.notes.data.strip() if form.notes.data else None
 
         try:
+            sync_owned_comics_series_text(series)
             db.session.commit()
             flash('Series updated successfully.', 'success')
             return redirect(url_for('admin.series_index'))

@@ -1529,6 +1529,20 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         bulkAddBtn.addEventListener('click', runBulkAdd);
+
+        const addParams = new URLSearchParams(window.location.search);
+        if (addParams.get('tab') === 'bulk') {
+            document.getElementById('bulk-tab')?.click();
+            if (addParams.get('series') && bulkSeries) {
+                bulkSeries.value = addParams.get('series');
+            }
+            if (addParams.get('issues') && bulkIssueRanges) {
+                bulkIssueRanges.value = addParams.get('issues');
+            }
+            if (addParams.get('volume') && bulkVolumeHint) {
+                bulkVolumeHint.value = addParams.get('volume');
+            }
+        }
     }
 
     {% if comic %}

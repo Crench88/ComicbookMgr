@@ -193,6 +193,11 @@ class Comic(db.Model):
     Comic model for storing comic book information.
     Contains all fields for comprehensive comic book data.
     """
+    __tablename__ = 'comic'
+    __table_args__ = (
+        db.Index('ix_comic_user_id_is_wishlist', 'user_id', 'is_wishlist'),
+    )
+
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)  # Full display title (e.g., "The Amazing Spider-Man: Worldwide #1")
     series = db.Column(db.String(200))  # Free-text series label (kept for grouping / unmatched comics)
@@ -240,13 +245,19 @@ class Comic(db.Model):
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     # Foreign key to user
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
     catalog_series = db.relationship('Series', back_populates='owned_comics')
     tags = db.relationship(
         'Tag',
         secondary=comic_tags,
         lazy='select',
         backref=db.backref('comics', lazy='dynamic'),
+    )
+    character_mentions = db.relationship(
+        'CharacterMention',
+        backref='comic',
+        lazy='select',
+        cascade='all, delete-orphan',
     )
     cover_variants = db.relationship(
         'ComicCover',
@@ -337,23 +348,51 @@ class Comic(db.Model):
             return self.release_date.strftime('%B %Y')
         return "Unknown"
     
-    def get_additional_covers(self):
-        """Return alternate covers as Base64 dictionaries for the UI."""
+    def _safe_cover_url(self, endpoint, **values):
+        """Build a cover URL when a Flask context exists; otherwise None."""
+        from flask import url_for
+
+        try:
+            return url_for(endpoint, **values)
+        except RuntimeError:
+            return None
+
+    def get_additional_covers(self, include_blob=False):
+        """Return alternate covers. Prefer URLs; Base64 is opt-in for writers/tests."""
         import base64
         from .services.cover_storage import get_variant_cover_bytes
 
         covers = []
         for cover in self.cover_variants:
-            image_data = get_variant_cover_bytes(cover)
-            if not image_data:
+            if include_blob:
+                image_data = get_variant_cover_bytes(cover)
+                if not image_data:
+                    continue
+            elif not (cover.image_path or cover.image_data):
                 continue
-            covers.append({
+            else:
+                image_data = None
+            item = {
                 'id': cover.id,
-                'blob_data': base64.b64encode(image_data).decode('utf-8'),
                 'mime_type': cover.mime_type or 'image/jpeg',
                 'label': cover.label or 'Cover',
                 'is_primary': False,
-            })
+                'url': self._safe_cover_url(
+                    'comics.serve_cover_variant_image',
+                    id=self.id,
+                    cover_id=cover.id,
+                    v=cover.image_version(),
+                ) if self.id else None,
+                'thumbnail_url': self._safe_cover_url(
+                    'comics.serve_cover_variant_thumbnail',
+                    id=self.id,
+                    cover_id=cover.id,
+                    v=cover.image_version(),
+                ) if self.id else None,
+            }
+            if include_blob:
+                item['blob_data'] = base64.b64encode(image_data).decode('utf-8')
+            covers.append(item)
         return covers
 
     def set_additional_covers(self, covers_list):
@@ -393,23 +432,40 @@ class Comic(db.Model):
                     )
         self.additional_covers = None
 
-    def get_all_covers(self):
-        """Return all covers including the primary cover with image bytes."""
+    def get_all_covers(self, include_blob=False):
+        """Return all covers. Prefer URLs; Base64 is opt-in for writers/tests."""
         import base64
         from .services.cover_storage import get_primary_cover_bytes
 
         covers = []
-        primary = get_primary_cover_bytes(self)
-        if primary:
-            covers.append({
+        if include_blob:
+            primary = get_primary_cover_bytes(self)
+            has_primary = bool(primary)
+        else:
+            primary = None
+            has_primary = bool(self.cover_image_path or self.cover_image)
+        if has_primary:
+            item = {
                 'id': None,
-                'blob_data': base64.b64encode(primary).decode('utf-8'),
                 'mime_type': self.cover_image_mime or 'image/jpeg',
                 'label': 'Primary Cover',
                 'is_primary': True,
-            })
+                'url': self._safe_cover_url(
+                    'comics.serve_cover_image',
+                    id=self.id,
+                    v=self.cover_version(),
+                ) if self.id else None,
+                'thumbnail_url': self._safe_cover_url(
+                    'comics.serve_cover_thumbnail',
+                    id=self.id,
+                    v=self.cover_version(),
+                ) if self.id else None,
+            }
+            if include_blob:
+                item['blob_data'] = base64.b64encode(primary).decode('utf-8')
+            covers.append(item)
 
-        covers.extend(self.get_additional_covers())
+        covers.extend(self.get_additional_covers(include_blob=include_blob))
         return covers
 
     def cover_version(self):
@@ -424,25 +480,49 @@ class Comic(db.Model):
         return str(int(stamp.timestamp())) if stamp else None
 
     def list_cover_summaries(self):
-        """Lightweight cover metadata for templates (no Base64 payloads)."""
+        """Lightweight cover metadata for templates (URLs, no Base64 payloads)."""
         covers = []
         if self.cover_image_path or self.cover_image:
+            version = self.cover_version()
             covers.append({
                 'id': None,
                 'is_primary': True,
                 'label': 'Primary Cover',
                 'mime_type': self.cover_image_mime or 'image/jpeg',
-                'version': self.cover_version(),
+                'version': version,
+                'url': self._safe_cover_url(
+                    'comics.serve_cover_image',
+                    id=self.id,
+                    v=version,
+                ) if self.id else None,
+                'thumbnail_url': self._safe_cover_url(
+                    'comics.serve_cover_thumbnail',
+                    id=self.id,
+                    v=version,
+                ) if self.id else None,
             })
         for cover in self.cover_variants:
             if not (cover.image_path or cover.image_data):
                 continue
+            version = cover.image_version()
             covers.append({
                 'id': cover.id,
                 'is_primary': False,
                 'label': cover.label or 'Cover',
                 'mime_type': cover.mime_type or 'image/jpeg',
-                'version': cover.image_version(),
+                'version': version,
+                'url': self._safe_cover_url(
+                    'comics.serve_cover_variant_image',
+                    id=self.id,
+                    cover_id=cover.id,
+                    v=version,
+                ) if self.id else None,
+                'thumbnail_url': self._safe_cover_url(
+                    'comics.serve_cover_variant_thumbnail',
+                    id=self.id,
+                    cover_id=cover.id,
+                    v=version,
+                ) if self.id else None,
             })
         return covers
 
@@ -573,6 +653,32 @@ class Comic(db.Model):
 
     def __repr__(self):
         return f'<Comic {self.title} #{self.issue_number}>'
+
+
+class CharacterMention(db.Model):
+    """Indexed character name from Comic.characters for dashboard counts."""
+    __tablename__ = 'character_mention'
+    __table_args__ = (
+        db.UniqueConstraint(
+            'user_id', 'comic_id', 'name',
+            name='uq_character_mention_user_comic_name',
+        ),
+        db.Index('ix_character_mention_user_name', 'user_id', 'name'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    comic_id = db.Column(
+        db.Integer,
+        db.ForeignKey('comic.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    name = db.Column(db.String(200), nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    def __repr__(self):
+        return f'<CharacterMention {self.name}>'
 
 
 class ComicCover(db.Model):

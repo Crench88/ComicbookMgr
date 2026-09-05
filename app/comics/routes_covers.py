@@ -120,7 +120,7 @@ def serve_cover_thumbnail(id):
     image_data = get_primary_cover_bytes(comic)
     if not image_data:
         return jsonify({'error': 'No cover image found'}), 404
-    return _cover_thumbnail_response(image_data)
+    return _cover_thumbnail_response(image_data, relative_path=comic.cover_image_path)
 
 
 @comics_bp.route('/comics/<int:id>/covers/<int:cover_id>/image')
@@ -145,7 +145,7 @@ def serve_cover_variant_thumbnail(id, cover_id):
     image_data = get_variant_cover_bytes(cover)
     if not image_data:
         return jsonify({'error': 'No cover image found'}), 404
-    return _cover_thumbnail_response(image_data)
+    return _cover_thumbnail_response(image_data, relative_path=cover.image_path)
 
 
 @comics_bp.route('/comics/<int:id>/covers/primary', methods=['POST'])

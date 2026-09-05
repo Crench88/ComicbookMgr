@@ -172,12 +172,24 @@ def apply_series_link(
     return None
 
 
+def sync_owned_comics_series_text(series: Series) -> int:
+    """Write catalog display_name onto every comic linked to this series."""
+    label = series.display_name
+    updated = 0
+    for comic in Comic.query.filter_by(series_id=series.id).all():
+        if comic.series != label:
+            comic.series = label
+            updated += 1
+    return updated
+
+
 def backfill_comic_series_links(*, sync_series_text: bool = True) -> dict:
     """Link existing comics to catalog Series rows. Returns match stats."""
     series_rows = Series.query.all()
     comics = Comic.query.filter(Comic.series_id.is_(None)).all()
     linked = 0
     unchanged = 0
+    relabeled = 0
 
     for comic in comics:
         matched = apply_series_link(
@@ -193,9 +205,14 @@ def backfill_comic_series_links(*, sync_series_text: bool = True) -> dict:
         else:
             unchanged += 1
 
+    if sync_series_text:
+        for series in series_rows:
+            relabeled += sync_owned_comics_series_text(series)
+
     db.session.commit()
     return {
         'linked': linked,
         'unchanged': unchanged,
+        'relabeled': relabeled,
         'catalog_series': len(series_rows),
     }

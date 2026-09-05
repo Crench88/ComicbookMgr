@@ -5,13 +5,18 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+from io import BytesIO
 from pathlib import Path
 
 from flask import current_app, request, send_file
+from PIL import Image, ImageOps
 
 from .. import db
 
 logger = logging.getLogger(__name__)
+
+THUMB_SIZE = (300, 400)
+THUMB_SUFFIX = '_thumb.webp'
 
 _MIME_TO_EXT = {
     'image/jpeg': '.jpg',
@@ -61,7 +66,61 @@ def _safe_resolve(relative_path: str | None) -> Path | None:
     return candidate
 
 
+def thumbnail_relative_path(relative_path: str | None) -> str | None:
+    """Sibling WebP thumbnail path for a stored cover file."""
+    if not relative_path:
+        return None
+    relative_path = relative_path.replace('\\', '/').lstrip('/')
+    if not relative_path or '..' in relative_path.split('/'):
+        return None
+    if '/' in relative_path:
+        parent, name = relative_path.rsplit('/', 1)
+        return f'{parent}/{Path(name).stem}{THUMB_SUFFIX}'
+    return f'{Path(relative_path).stem}{THUMB_SUFFIX}'
+
+
+def render_cover_thumbnail(blob: bytes) -> bytes | None:
+    """Resize cover bytes to a ~300px WebP thumbnail."""
+    if not blob:
+        return None
+    try:
+        with Image.open(BytesIO(blob)) as source:
+            image = ImageOps.exif_transpose(source)
+            image.thumbnail(THUMB_SIZE, Image.Resampling.LANCZOS)
+            if image.mode not in ('RGB', 'L'):
+                background = Image.new('RGB', image.size, 'white')
+                if 'A' in image.getbands():
+                    background.paste(image, mask=image.getchannel('A'))
+                else:
+                    background.paste(image)
+                image = background
+            elif image.mode == 'L':
+                image = image.convert('RGB')
+            output = BytesIO()
+            image.save(output, format='WEBP', quality=80, method=4)
+            return output.getvalue()
+    except (OSError, ValueError, Image.UnidentifiedImageError, Image.DecompressionBombError):
+        logger.warning('Could not render cover thumbnail', exc_info=True)
+        return None
+
+
+def write_cover_thumbnail(relative_cover_path: str | None, blob: bytes | None) -> str | None:
+    """Write the sibling WebP thumbnail next to a stored cover."""
+    thumb_rel = thumbnail_relative_path(relative_cover_path)
+    if not thumb_rel or not blob:
+        return None
+    data = render_cover_thumbnail(blob)
+    if not data:
+        return None
+    return _write_bytes(thumb_rel, data)
+
+
 def delete_cover_file(relative_path: str | None) -> None:
+    _unlink_relative(relative_path)
+    _unlink_relative(thumbnail_relative_path(relative_path))
+
+
+def _unlink_relative(relative_path: str | None) -> None:
     path = _safe_resolve(relative_path)
     if path is None:
         return
@@ -136,6 +195,32 @@ def send_cover_response(relative_path: str | None, blob: bytes | None, mime_type
     return None
 
 
+def send_cover_thumbnail_response(relative_path: str | None, blob: bytes | None):
+    """Serve a persisted WebP thumb, generating it on first request if needed."""
+    from ..comics.helpers import _cover_blob_response
+
+    thumb_rel = thumbnail_relative_path(relative_path)
+    path = _safe_resolve(thumb_rel)
+    if path is not None:
+        response = send_file(path, mimetype='image/webp', conditional=True)
+        return apply_cover_cache_headers(response)
+
+    source = blob or read_cover_bytes(relative_path)
+    if not source:
+        return None
+    if relative_path:
+        write_cover_thumbnail(relative_path, source)
+        path = _safe_resolve(thumbnail_relative_path(relative_path))
+        if path is not None:
+            response = send_file(path, mimetype='image/webp', conditional=True)
+            return apply_cover_cache_headers(response)
+
+    thumbnail = render_cover_thumbnail(source)
+    if not thumbnail:
+        return None
+    return _cover_blob_response(thumbnail, 'image/webp')
+
+
 def _write_bytes(relative_path: str, blob: bytes) -> str:
     relative_path = relative_path.replace('\\', '/')
     root = covers_root()
@@ -176,6 +261,7 @@ def persist_primary_cover(comic, blob: bytes, mime_type: str | None) -> str:
 
     old_path = getattr(comic, 'cover_image_path', None)
     _write_bytes(relative, blob)
+    write_cover_thumbnail(relative, blob)
     comic.cover_image_path = relative
     comic.cover_image_mime = mime_type or 'image/jpeg'
     if keep_blob_copies():
@@ -198,6 +284,7 @@ def persist_variant_cover(cover, blob: bytes, mime_type: str | None, *, user_id:
     relative = f'{user_id}/{comic_id}/{_versioned_name(f"variant_{cover.id}", blob, mime_type)}'
     old_path = getattr(cover, 'image_path', None)
     _write_bytes(relative, blob)
+    write_cover_thumbnail(relative, blob)
     cover.image_path = relative
     cover.mime_type = mime_type or 'image/jpeg'
     if keep_blob_copies():

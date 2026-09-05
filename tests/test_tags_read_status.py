@@ -121,3 +121,7 @@ class TestComicFormTagsAndStatus:
         response = client.get('/comics?tag=key-issue&read_status=read&series=ROM')
         assert response.status_code == 200
         assert b'ROM #1' in response.data or b'#1' in response.data
+        html = response.data.decode()
+        assert 'value="key-issue"' in html
+        assert 'selected' in html
+        assert 'value="read"' in html

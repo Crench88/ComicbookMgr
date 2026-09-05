@@ -8,7 +8,9 @@ from sqlalchemy.orm import defer, with_expression
 from .. import db
 from ..forms import ComicForm
 from ..models import Comic, Series, Tag
+from ..services.series_gaps import catalog_gaps_for_series, serialize_series_gaps
 from ..services.series_link import apply_series_link
+from ..services.characters import sync_character_mentions
 from ..services.tags import normalize_read_status, sync_comic_tags
 from . import comics_bp
 from .helpers import (
@@ -23,6 +25,7 @@ from .helpers import (
     _parse_comicvine_issue_id,
     _safe_redirect_target,
     _serialize_comic_for_grid,
+    _series_group_sql,
     _series_page_for_name,
 )
 
@@ -110,12 +113,7 @@ def index():
         if selected_series and selected_series not in series_names:
             count_row = _filter_series_query(
                 current_user.id, **filter_kwargs,
-            ).filter(
-                func.coalesce(
-                    func.nullif(func.trim(Comic.series), ''),
-                    'Unknown Series',
-                ) == selected_series
-            ).first()
+            ).filter(_series_group_sql() == selected_series).first()
             if count_row:
                 # Jump the sidebar to the page that contains this series.
                 needed_page = _series_page_for_name(
@@ -140,12 +138,7 @@ def index():
         if selected_series_count == 0:
             count_row = _filter_series_query(
                 current_user.id, **filter_kwargs,
-            ).filter(
-                func.coalesce(
-                    func.nullif(func.trim(Comic.series), ''),
-                    'Unknown Series',
-                ) == selected_series_name
-            ).first()
+            ).filter(_series_group_sql() == selected_series_name).first()
             selected_series_count = count_row.issue_count if count_row else 0
 
         comics_query = _comics_for_series_query(
@@ -162,6 +155,13 @@ def index():
             return redirect(url_for('comics.index', **args))
         _annotate_duplicates(comics_pagination.items)
         selected_comics = comics_pagination.items
+
+    series_gaps = None
+    if selected_series_name:
+        series_gaps = serialize_series_gaps(
+            catalog_gaps_for_series(current_user.id, selected_series_name),
+            selected_series_name,
+        )
 
     class TotalComics:
         def __init__(self, total):
@@ -181,10 +181,14 @@ def index():
         publisher_filter=publisher_filter,
         condition_filter=condition_filter,
         genre_filter=genre_filter,
+        tag_filter=tag_filter,
+        read_status_filter=read_status_filter,
         wishlist_only=wishlist_only,
         sort_by=sort_by,
         publishers=publishers,
+        available_tags=available_tags,
         comics_per_page=COMICS_PER_PAGE,
+        series_gaps=series_gaps,
     )
 
 
@@ -236,6 +240,10 @@ def series_issues():
     return jsonify({
         'series': series_name,
         'comics': [_serialize_comic_for_grid(c) for c in pagination.items],
+        'gaps': serialize_series_gaps(
+            catalog_gaps_for_series(current_user.id, series_name),
+            series_name,
+        ),
         'pagination': {
             'page': comic_page,
             'pages': pagination.pages or 1,
@@ -302,6 +310,8 @@ def new():
         
         try:
             db.session.add(comic)
+            db.session.flush()
+            sync_character_mentions(comic)
             db.session.commit()
             flash('Comic added successfully!', 'success')
             return redirect(url_for('comics.index'))
@@ -386,6 +396,7 @@ def edit(id):
             )
         
         try:
+            sync_character_mentions(comic)
             db.session.commit()
             flash('Comic updated successfully!', 'success')
             return redirect(url_for('comics.show', id=comic.id, next=collection_return_url))

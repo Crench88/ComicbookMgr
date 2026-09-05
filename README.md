@@ -230,12 +230,14 @@ python scripts/migrate_covers_to_filesystem.py --clear-blobs
 
 `COVERS_FOLDER` and `COVERS_KEEP_BLOB` can override the defaults via environment variables.
 
+After filesystem covers are trusted (the migrate script has run and thumbnails load from `/comics/<id>/cover` and `/covers/<cover_id>/image`), set `COVERS_KEEP_BLOB=false` so new writes skip the SQLite BLOB. Dual-read stays in place for any leftover legacy rows. Templates serve variants by URL — do not embed Base64 cover bytes in HTML.
+
 ### Digital comic reader (CBZ / CBR)
 Attach a `.cbz` or `.cbr` on a comic’s detail page, then open **Read**.
 
 - Archives are stored under `instance/digital/{user_id}/{comic_id}/`
 - Pages are extracted on demand, then cached; reading keys are ← → / A D, `S` toggles two-page spread, `Esc` exits
-- Last page is remembered per user (`ReadingProgress`) and unfinished comics appear under **Continue Reading** on the dashboard
+- Last page is remembered per user (`ReadingProgress`). The dashboard shows **Continue Reading**, **Up Next** (next unfinished digital issue in the same series), and **Unread Digital** files you have not started
 - Override storage with `DIGITAL_FOLDER`; upload size still respects `MAX_CONTENT_LENGTH` (default 64 MB)
 
 #### CBR support

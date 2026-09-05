@@ -460,6 +460,34 @@
             bindCoverPreviews(grid);
         }
 
+        function renderSeriesGaps(gaps, seriesName) {
+            var banner = document.getElementById('seriesGapBanner');
+            if (!banner) return;
+            if (!gaps || !gaps.missing || !gaps.missing.length) {
+                banner.hidden = true;
+                banner.innerHTML = '';
+                return;
+            }
+            var preview = gaps.missing_preview || gaps.missing.slice(0, 12);
+            var numbers = preview.map(function(number) { return '#' + number; }).join(', ');
+            if (gaps.missing_more) {
+                numbers += ' and ' + gaps.missing_more + ' more';
+            }
+            var addUrl = gaps.add_url || (
+                '/comics/new?tab=bulk&series=' + encodeURIComponent(seriesName || '') +
+                '&issues=' + encodeURIComponent(gaps.missing_ranges || '')
+            );
+            banner.hidden = false;
+            banner.innerHTML =
+                '<div class="series-gap-copy">' +
+                    '<strong>Missing ' + gaps.missing.length + ' of ' + gaps.catalog_count + ' catalog issues</strong>' +
+                    '<span class="series-gap-numbers">' + escapeHtml(numbers) + '</span>' +
+                '</div>' +
+                '<a href="' + escapeHtml(addUrl) + '" class="btn btn-sm btn-outline-primary" id="seriesGapAddLink">' +
+                    '<i class="bi bi-plus-circle"></i> Add missing' +
+                '</a>';
+        }
+
         function updatePaginationNav(pagination, seriesName) {
             var nav = document.getElementById('comicPagination');
             if (!nav || !pagination || pagination.pages <= 1) {
@@ -516,6 +544,7 @@
                     }
                     metaEl.textContent = meta;
                 }
+                renderSeriesGaps(data.gaps, data.series);
 
                 browser.querySelectorAll('.series-list-item').forEach(function(link) {
                     var active = link.dataset.series === seriesName;
