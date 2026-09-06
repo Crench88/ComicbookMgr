@@ -26,7 +26,7 @@
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=static_css_v) }}">
 
     {% block extra_css %}{% endblock %}
 </head>
@@ -65,6 +65,9 @@
                             <li><a class="dropdown-item" href="{{ url_for('admin.series_issues') }}">Series Issues</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('admin.manage_roles') }}">
                                 <i class="bi bi-shield-lock me-1"></i>Manage Roles
+                            </a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('admin.backup') }}">
+                                <i class="bi bi-archive me-1"></i>Backup
                             </a></li>
                         </ul>
                     </li>
@@ -183,7 +186,7 @@
         var idleTimeoutSeconds = {{ idle_timeout_seconds|int }};
         var logoutUrl = {{ url_for('auth.logout')|tojson }};
     </script>
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/script.js', v=static_js_v) }}"></script>
 
     {% block extra_js %}{% endblock %}
 </body>

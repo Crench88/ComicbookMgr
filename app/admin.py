@@ -2,7 +2,7 @@
 Administrative routes for managing comic metadata such as canonical series lists.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app, send_file
 from flask_login import current_user
 from .decorators import admin_required
 from sqlalchemy.exc import IntegrityError
@@ -452,4 +452,109 @@ def reset_user_password(user_id):
     db.session.commit()
     flash(f'Password reset for {user.username}.', 'success')
     return redirect(url_for('admin.manage_roles'))
+
+
+@admin_bp.route('/backup')
+@admin_required
+def backup():
+    """One-click download of the live SQLite DB, covers, and digital files."""
+    from .services.site_backup import list_backup_zips
+
+    return render_template(
+        'admin/backup.html',
+        leftover_backups=list_backup_zips(),
+        csrf_token=generate_csrf(),
+    )
+
+
+@admin_bp.route('/backup/create', methods=['POST'])
+@admin_required
+def create_backup():
+    """Build a zip under instance/backups/ without touching production files."""
+    from .services.site_backup import BackupError, create_site_backup, list_backup_zips
+
+    try:
+        payload = create_site_backup()
+    except BackupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception:
+        current_app.logger.exception('Site backup failed')
+        return jsonify({
+            'success': False,
+            'error': 'Could not create the backup zip. Check the error log.',
+        }), 500
+
+    payload['success'] = True
+    payload['download_url'] = url_for('admin.download_backup', filename=payload['filename'])
+    payload['leftover_backups'] = list_backup_zips()
+    return jsonify(payload)
+
+
+@admin_bp.route('/backup/download/<filename>')
+@admin_required
+def download_backup(filename):
+    """Download one temporary backup zip."""
+    from .services.site_backup import BackupError, safe_backup_path
+
+    try:
+        path = safe_backup_path(filename)
+    except BackupError:
+        flash('That backup file name is not valid.', 'danger')
+        return redirect(url_for('admin.backup'))
+    if not path.is_file():
+        flash('That backup zip is no longer on the server.', 'warning')
+        return redirect(url_for('admin.backup'))
+    return send_file(
+        path,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=path.name,
+    )
+
+
+@admin_bp.route('/backup/cleanup', methods=['POST'])
+@admin_required
+def cleanup_backup():
+    """Delete temporary backup zips only — never the live DB, covers, or digital files."""
+    from .services.site_backup import (
+        BackupError,
+        delete_all_backup_zips,
+        delete_backup_zip,
+        list_backup_zips,
+    )
+
+    payload = request.get_json(silent=True) or {}
+    filename = (payload.get('filename') or request.form.get('filename') or '').strip()
+    delete_all = bool(payload.get('all') or request.form.get('all'))
+    wants_json = bool(request.is_json or request.headers.get('X-CSRFToken'))
+
+    try:
+        if delete_all:
+            removed = delete_all_backup_zips()
+            message = (
+                f'Removed {removed} temporary backup zip'
+                f'{"" if removed == 1 else "s"} from the server.'
+            )
+        elif filename:
+            delete_backup_zip(filename)
+            message = f'Removed {filename} from the server. Live collection files were not touched.'
+        else:
+            if wants_json:
+                return jsonify({'success': False, 'error': 'No backup file was specified.'}), 400
+            flash('No backup file was specified.', 'danger')
+            return redirect(url_for('admin.backup'))
+    except BackupError as exc:
+        if wants_json:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+        flash(str(exc), 'danger')
+        return redirect(url_for('admin.backup'))
+
+    if wants_json:
+        return jsonify({
+            'success': True,
+            'message': message,
+            'leftover_backups': list_backup_zips(),
+        })
+    flash(message, 'success')
+    return redirect(url_for('admin.backup'))
 

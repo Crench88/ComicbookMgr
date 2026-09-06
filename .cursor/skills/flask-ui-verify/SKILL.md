@@ -26,7 +26,7 @@ If you change how a comic is saved, filtered, or returned:
 - Desktop: collection is sidebar + grid. Do not break `--collection-sidebar-top` or the sticky filter bar.
 - Check a ~375px width when the change touches nav, filters, or the series list.
 - Themes: light and dark tokens live in `app/static/css/style.css`. Prefer tokens, not raw Bootstrap blues.
-- Authenticated nav is Dashboard, My Comics, Add, and admin items. Wishlist is a My Comics filter (`Wishlist only` + Open wishlist), not a top-level item. Import/Export live in the account menu only.
+- Authenticated nav is Dashboard, My Comics, Add, and admin items. Wishlist is a My Comics filter (`Wishlist only` + Open wishlist), not a top-level item. Import/Export live in the account menu only. Admin **Backup** is under Comic Admin; cleanup must never remove `instance/comicbook.db` or `instance/covers/`.
 - Show page leads with cover, read/edit, credits, and variants. UPC, ownership sliders, ComicVine IDs, and dates stay in `comic-show-disclosure` details.
 
 ## Forms and JS

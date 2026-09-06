@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block title %}Backup{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+            <div>
+                <h1 class="h3 mb-1"><i class="bi bi-archive"></i> Site backup</h1>
+                <p class="text-muted mb-0">Download a zip of the live database, cover files, and digital archives. Temporary zips are stored separately from production files.</p>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h2 class="h5">What is included</h2>
+                <ul class="mb-3">
+                    <li><code>comicbook.db</code> — a snapshot of the SQLite database (BLOBs still in the DB stay in this file)</li>
+                    <li><code>covers/</code> — filesystem covers and WebP thumbnails</li>
+                    <li><code>digital/</code> — uploaded CBZ/CBR files, if any</li>
+                </ul>
+                <p class="small text-muted mb-3">
+                    Not included: <code>.env</code>, <code>reader_cache</code>, API cache, or these temporary backup zips.
+                    Creating a backup does not move or delete the live database or cover folders.
+                </p>
+                <button type="button" class="btn btn-primary" id="createBackupBtn">
+                    <i class="bi bi-download me-1"></i>Create and download backup
+                </button>
+                <div id="backupStatus" class="small mt-3 d-none" role="status"></div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm" id="leftoverBackupCard">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h2 class="h6 mb-0">Temporary zips on the server</h2>
+                <form method="post" action="{{ url_for('admin.cleanup_backup') }}" id="cleanupAllBackupsForm" class="m-0">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="all" value="1">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" id="cleanupAllBackupsBtn"
+                            {% if not leftover_backups %}disabled{% endif %}>
+                        Delete all temp zips
+                    </button>
+                </form>
+            </div>
+            <div class="card-body p-0">
+                <p class="small text-muted px-3 pt-3 mb-0">
+                    These files live in <code>instance/backups/</code> only. Deleting them never removes
+                    <code>instance/comicbook.db</code>, <code>instance/covers/</code>, or <code>instance/digital/</code>.
+                </p>
+                <ul class="list-group list-group-flush" id="leftoverBackupList">
+                    {% for item in leftover_backups %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center gap-2" data-filename="{{ item.filename }}">
+                        <span>
+                            <a href="{{ url_for('admin.download_backup', filename=item.filename) }}">{{ item.filename }}</a>
+                            <span class="text-muted small ms-2">{{ item.size_label }}</span>
+                        </span>
+                        <button type="button" class="btn btn-sm btn-outline-danger leftover-delete-btn" data-filename="{{ item.filename }}">
+                            Delete zip
+                        </button>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted" id="leftoverBackupEmpty">No temporary backup zips on the server.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var createBtn = document.getElementById('createBackupBtn');
+    var statusEl = document.getElementById('backupStatus');
+    var leftoverList = document.getElementById('leftoverBackupList');
+    var cleanupAllBtn = document.getElementById('cleanupAllBackupsBtn');
+
+    function csrfToken() {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? meta.content : '';
+    }
+
+    function setStatus(message, kind) {
+        statusEl.textContent = message;
+        statusEl.className = 'small mt-3';
+        if (kind === 'error') statusEl.classList.add('text-danger');
+        else if (kind === 'success') statusEl.classList.add('text-success');
+        else statusEl.classList.add('text-muted');
+        statusEl.classList.remove('d-none');
+    }
+
+    function renderLeftovers(items) {
+        leftoverList.innerHTML = '';
+        if (!items || !items.length) {
+            leftoverList.innerHTML = '<li class="list-group-item text-muted" id="leftoverBackupEmpty">No temporary backup zips on the server.</li>';
+            cleanupAllBtn.disabled = true;
+            return;
+        }
+        cleanupAllBtn.disabled = false;
+        items.forEach(function (item) {
+            var li = document.createElement('li');
+            li.className = 'list-group-item d-flex justify-content-between align-items-center gap-2';
+            li.dataset.filename = item.filename;
+            li.innerHTML =
+                '<span><a href="/admin/backup/download/' + encodeURIComponent(item.filename) + '">' +
+                item.filename + '</a><span class="text-muted small ms-2">' + item.size_label +
+                '</span></span><button type="button" class="btn btn-sm btn-outline-danger leftover-delete-btn" data-filename="' +
+                item.filename + '">Delete zip</button>';
+            leftoverList.appendChild(li);
+        });
+    }
+
+    function cleanup(payload) {
+        return fetch('{{ url_for("admin.cleanup_backup") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken()
+            },
+            body: JSON.stringify(payload)
+        }).then(function (response) { return response.json().then(function (data) {
+            return { ok: response.ok, data: data };
+        }); });
+    }
+
+    function askCleanup(filename, sizeLabel) {
+        var ok = window.confirm(
+            'The backup download finished (' + (sizeLabel || filename) + ').\n\n' +
+            'Delete the temporary zip from the server?\n\n' +
+            'This only removes the file in instance/backups/. It does not delete your live database, covers, or digital comics.'
+        );
+        if (!ok) {
+            setStatus('Download saved. The temporary zip is still on the server until you delete it below.', 'success');
+            return;
+        }
+        cleanup({ filename: filename }).then(function (result) {
+            if (!result.ok || !result.data.success) {
+                setStatus((result.data && result.data.error) || 'Could not delete the temporary zip.', 'error');
+                return;
+            }
+            renderLeftovers(result.data.leftover_backups);
+            setStatus(result.data.message, 'success');
+        }).catch(function () {
+            setStatus('Could not delete the temporary zip.', 'error');
+        });
+    }
+
+    function downloadBlob(url, filename) {
+        return fetch(url, { headers: { 'X-CSRFToken': csrfToken() } }).then(function (response) {
+            if (!response.ok) throw new Error('Download failed');
+            return response.blob();
+        }).then(function (blob) {
+            var objectUrl = URL.createObjectURL(blob);
+            var link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1000);
+        });
+    }
+
+    createBtn.addEventListener('click', function () {
+        createBtn.disabled = true;
+        setStatus('Creating backup zip…', 'info');
+        fetch('{{ url_for("admin.create_backup") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken()
+            },
+            body: JSON.stringify({})
+        }).then(function (response) {
+            return response.json().then(function (data) {
+                if (!response.ok || !data.success) {
+                    throw new Error((data && data.error) || 'Backup failed');
+                }
+                return data;
+            });
+        }).then(function (data) {
+            renderLeftovers(data.leftover_backups || []);
+            setStatus('Downloading ' + data.filename + ' (' + data.size_label + ')…', 'info');
+            return downloadBlob(data.download_url, data.filename).then(function () {
+                return data;
+            });
+        }).then(function (data) {
+            askCleanup(data.filename, data.size_label);
+        }).catch(function (error) {
+            setStatus(error.message || 'Backup failed.', 'error');
+        }).finally(function () {
+            createBtn.disabled = false;
+        });
+    });
+
+    leftoverList.addEventListener('click', function (event) {
+        var button = event.target.closest('.leftover-delete-btn');
+        if (!button) return;
+        var filename = button.getAttribute('data-filename');
+        if (!window.confirm('Delete ' + filename + ' from the server? The live database and covers will not be touched.')) {
+            return;
+        }
+        cleanup({ filename: filename }).then(function (result) {
+            if (!result.ok || !result.data.success) {
+                setStatus((result.data && result.data.error) || 'Could not delete that zip.', 'error');
+                return;
+            }
+            renderLeftovers(result.data.leftover_backups);
+            setStatus(result.data.message, 'success');
+        });
+    });
+
+    var cleanupAllForm = document.getElementById('cleanupAllBackupsForm');
+    cleanupAllForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        if (cleanupAllBtn.disabled) return;
+        if (!window.confirm('Delete every temporary backup zip from the server? Live collection files will not be touched.')) {
+            return;
+        }
+        cleanupAllBtn.disabled = true;
+        cleanup({ all: true }).then(function (result) {
+            if (!result.ok || !result.data.success) {
+                setStatus((result.data && result.data.error) || 'Could not delete the temporary zips.', 'error');
+                cleanupAllBtn.disabled = false;
+                return;
+            }
+            renderLeftovers(result.data.leftover_backups);
+            setStatus(result.data.message, 'success');
+        }).catch(function () {
+            setStatus('Could not delete the temporary zips.', 'error');
+            cleanupAllBtn.disabled = false;
+        });
+    });
+})();
+</script>
+{% endblock %}

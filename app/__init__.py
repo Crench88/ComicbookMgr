@@ -125,6 +125,7 @@ def create_app(test_config=None):
             COVERS_FOLDER=os.environ.get('COVERS_FOLDER', os.path.join(app.instance_path, 'covers')),
             COVERS_KEEP_BLOB=os.environ.get('COVERS_KEEP_BLOB', 'true').lower() in ['1', 'true', 'yes', 'on'],
             DIGITAL_FOLDER=os.environ.get('DIGITAL_FOLDER', os.path.join(app.instance_path, 'digital')),
+            BACKUPS_FOLDER=os.environ.get('BACKUPS_FOLDER', os.path.join(app.instance_path, 'backups')),
             READER_CACHE_DIR=os.environ.get(
                 'READER_CACHE_DIR', os.path.join(app.instance_path, 'reader_cache')
             ),
@@ -162,6 +163,7 @@ def create_app(test_config=None):
         app.config.setdefault('COVERS_FOLDER', os.path.join(app.instance_path, 'covers'))
         app.config.setdefault('COVERS_KEEP_BLOB', True)
         app.config.setdefault('DIGITAL_FOLDER', os.path.join(app.instance_path, 'digital'))
+        app.config.setdefault('BACKUPS_FOLDER', os.path.join(app.instance_path, 'backups'))
         app.config.setdefault(
             'READER_CACHE_DIR', os.path.join(app.instance_path, 'reader_cache')
         )
@@ -259,12 +261,21 @@ def create_app(test_config=None):
             theme_pref = current_user.get_preferred_theme()
         else:
             theme_pref = 'system'
+        def _static_mtime(*parts):
+            path = os.path.join(app.static_folder, *parts)
+            try:
+                return int(os.path.getmtime(path))
+            except OSError:
+                return 0
+
         return {
             'user_theme_preference': theme_pref,
             'csrf_token': generate_csrf(),
             'idle_timeout_seconds': int(app.config.get(
                 'IDLE_TIMEOUT_SECONDS', DEFAULT_IDLE_TIMEOUT_SECONDS
             )),
+            'static_css_v': _static_mtime('css', 'style.css'),
+            'static_js_v': _static_mtime('js', 'script.js'),
         }
 
     return app

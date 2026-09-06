@@ -457,6 +457,7 @@ class TestEstimatedValueUpdate:
         assert 'Enrich comic' in page
         assert 'id="refreshComicVineShowBtn"' in page
         assert 'comic-show-facts' in page
+        assert 'd-flex flex-wrap' in page
         assert 'Catalog &amp; record' in page or 'Catalog & record' in page
         assert 'Basic Information' not in page
 

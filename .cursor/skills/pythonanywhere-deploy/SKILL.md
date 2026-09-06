@@ -41,6 +41,8 @@ SFTP/upload the live DB only when the user explicitly wants to **replace** the h
 
 Never commit `.env` or the live SQLite file as the deploy method.
 
+Admin **Backup** builds a zip in `instance/backups/` (SQLite snapshot + `covers/` + `digital/`). Download it in the browser, then confirm cleanup — that deletes only the temp zip, never the live DB or cover folders. Do not leave old zips in `~/ComicbookMgr/instance/backups/` on the free disk quota.
+
 ## Env
 
 Template: `env.pythonanywhere.example`. Idle window: `IDLE_TIMEOUT_SECONDS=1800` (optional; code defaults to 1800). `SECRET_KEY` must be set in production.

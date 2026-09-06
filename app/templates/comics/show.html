@@ -140,16 +140,28 @@
                 <div id="refreshComicVineShowStatus" class="alert d-none mt-2 mb-0 py-2 small" role="alert"></div>
             </div>
             <div class="card-body comic-show-details-body" id="comicDetailsBody">
-                <ul class="comic-show-facts">
-                    <li><span>Publisher</span>{{ comic.publisher }}</li>
-                    <li><span>Released</span>{{ comic.get_formatted_release_date() }}</li>
-                    <li><span>Condition</span>{{ comic.condition or 'Not specified' }}</li>
-                    <li>
+                <ul class="comic-show-facts list-unstyled d-flex flex-wrap align-items-start gap-3 mb-3">
+                    <li class="d-flex flex-column">
+                        <span>Publisher</span>
+                        <span>{{ comic.publisher }}</span>
+                    </li>
+                    <li class="d-flex flex-column">
+                        <span>Released</span>
+                        <span>{{ comic.get_formatted_release_date() }}</span>
+                    </li>
+                    <li class="d-flex flex-column">
+                        <span>Condition</span>
+                        <span>{{ comic.condition or 'Not specified' }}</span>
+                    </li>
+                    <li class="d-flex flex-column">
                         <span>Value</span>
                         <span class="badge bg-success" id="comicEstimatedValueBadge">{{ comic.get_formatted_value() }}</span>
                     </li>
                     {% if comic.genre %}
-                    <li><span>Genre</span>{{ comic.genre }}</li>
+                    <li class="d-flex flex-column">
+                        <span>Genre</span>
+                        <span>{{ comic.genre }}</span>
+                    </li>
                     {% endif %}
                 </ul>
 
